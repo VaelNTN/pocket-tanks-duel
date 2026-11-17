@@ -7,6 +7,9 @@ const config: CapacitorConfig = {
   server: {
     androidScheme: 'https',
   },
+  android: {
+    backgroundColor: '#0b1120',
+  },
 };
 
 export default config;

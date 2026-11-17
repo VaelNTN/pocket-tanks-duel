@@ -58,7 +58,7 @@ export function loadPocketTanksState(deviceId: string): PocketTanksState {
   const base: PocketTanksState = {
     deviceId,
     apiBaseUrl: defaultApi,
-    playerName: 'TankCommandant',
+    playerName: 'TankCommander',
     tankSkin: 0,
     soundEnabled: true,
     bestScore: 0,
@@ -80,7 +80,7 @@ export function loadPocketTanksState(deviceId: string): PocketTanksState {
       playerName:
         typeof p.playerName === 'string' && p.playerName.trim()
           ? p.playerName.trim()
-          : 'TankCommandant',
+          : 'TankCommander',
       tankSkin: typeof p.tankSkin === 'number' ? p.tankSkin : 0,
       soundEnabled: p.soundEnabled !== false,
       bestScore: Math.max(0, Number(p.bestScore || 0)),
@@ -113,7 +113,7 @@ export function recordPocketTanksMatch(
   if (score > 0) {
     const entry: PocketTanksHighscore = {
       id: `pt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-      playerName: state.playerName.trim() || 'TankCommandant',
+      playerName: state.playerName.trim() || 'TankCommander',
       score,
       wins: state.totalWins,
       bestStreak: state.bestStreak,

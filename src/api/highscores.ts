@@ -54,7 +54,7 @@ export async function submitGlobalPocketTanksScore(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         deviceId: payload.deviceId,
-        playerName: payload.playerName.trim() || 'TankCommandant',
+        playerName: payload.playerName.trim() || 'TankCommander',
         score: payload.score,
         wins: payload.wins,
         bestStreak: payload.bestStreak,

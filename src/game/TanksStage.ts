@@ -132,10 +132,10 @@ export class TanksStage {
     this.onHud = onHud;
     this.onMatchEnd = onMatchEnd;
 
-    for (let i = 0; i < 65; i++) {
+    for (let i = 0; i < 110; i++) {
       this.stars.push({
         x: Math.random() * WORLD_W,
-        y: Math.random() * (WORLD_H * 0.65),
+        y: -650 + Math.random() * (WORLD_H * 0.65 + 650),
         r: 0.8 + Math.random() * 1.8,
         a: 0.35 + Math.random() * 0.65,
       });
@@ -239,7 +239,7 @@ export class TanksStage {
         power: 68,
         fuel: 100,
         skinId: this.playerSkinId,
-        label: 'JIJ',
+        label: 'YOU',
       },
       {
         x: x2,
@@ -697,12 +697,26 @@ export class TanksStage {
     });
   }
 
+  private getViewTransform(cssW: number, cssH: number) {
+    const scaleX = cssW / WORLD_W;
+    const scaleY = cssH / WORLD_H;
+    const scale = Math.min(scaleX, scaleY);
+    const offsetX = (cssW - WORLD_W * scale) * 0.5;
+    const offsetY = cssH - WORLD_H * scale;
+    const skyTopWorldY = -offsetY / scale;
+    const leftWorldX = -offsetX / scale;
+    const viewWorldW = cssW / scale;
+    const viewWorldH = cssH / scale;
+    return { scale, offsetX, offsetY, skyTopWorldY, leftWorldX, viewWorldW, viewWorldH };
+  }
+
   private attachPointerAim(): void {
     const toWorld = (clientX: number, clientY: number) => {
       const rect = this.canvas.getBoundingClientRect();
+      const t = this.getViewTransform(Math.max(1, rect.width), Math.max(1, rect.height));
       return {
-        x: ((clientX - rect.left) / Math.max(1, rect.width)) * WORLD_W,
-        y: ((clientY - rect.top) / Math.max(1, rect.height)) * WORLD_H,
+        x: (clientX - rect.left - t.offsetX) / t.scale,
+        y: (clientY - rect.top - t.offsetY) / t.scale,
       };
     };
 
@@ -733,33 +747,40 @@ export class TanksStage {
   }
 
   private render(): void {
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
     if (w <= 0 || h <= 0) return;
-    if (this.canvas.width !== Math.floor(w * dpr) || this.canvas.height !== Math.floor(h * dpr)) {
-      this.canvas.width = Math.floor(w * dpr);
-      this.canvas.height = Math.floor(h * dpr);
+    const targetW = Math.round(w * dpr);
+    const targetH = Math.round(h * dpr);
+    if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
+      this.canvas.width = targetW;
+      this.canvas.height = targetH;
     }
 
+    const vt = this.getViewTransform(w, h);
     const ctx = this.ctx;
     ctx.save();
-    ctx.scale(this.canvas.width / WORLD_W, this.canvas.height / WORLD_H);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.translate(vt.offsetX, vt.offsetY);
+    ctx.scale(vt.scale, vt.scale);
 
     if (this.shake > 0) {
       ctx.translate((Math.random() - 0.5) * this.shake, (Math.random() - 0.5) * this.shake);
     }
 
-    // Sky gradient
-    const sky = ctx.createLinearGradient(0, 0, 0, WORLD_H);
-    sky.addColorStop(0, '#091126');
-    sky.addColorStop(0.55, '#1e293b');
+    // Sky gradient covering full visible height (including extended portrait sky)
+    const skyTop = Math.min(0, vt.skyTopWorldY) - 20;
+    const sky = ctx.createLinearGradient(0, skyTop, 0, WORLD_H);
+    sky.addColorStop(0, '#070d1c');
+    sky.addColorStop(0.55, '#172338');
     sky.addColorStop(1, '#334155');
     ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+    ctx.fillRect(vt.leftWorldX - 20, skyTop, vt.viewWorldW + 40, WORLD_H - skyTop + 40);
 
-    // Stars
+    // Stars across full sky
     for (const s of this.stars) {
+      if (s.y < skyTop) continue;
       ctx.fillStyle = `rgba(255,255,255,${s.a})`;
       ctx.beginPath();
       ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
@@ -769,12 +790,12 @@ export class TanksStage {
     // Distant silhouette mountains
     ctx.fillStyle = 'rgba(15, 23, 42, 0.55)';
     ctx.beginPath();
-    ctx.moveTo(0, WORLD_H);
+    ctx.moveTo(0, WORLD_H + 20);
     for (let x = 0; x <= WORLD_W; x += 60) {
       const mh = 250 + Math.sin(x * 0.012) * 45 + Math.cos(x * 0.024) * 25;
       ctx.lineTo(x, mh);
     }
-    ctx.lineTo(WORLD_W, WORLD_H);
+    ctx.lineTo(WORLD_W, WORLD_H + 20);
     ctx.closePath();
     ctx.fill();
 
@@ -786,11 +807,11 @@ export class TanksStage {
     groundGrad.addColorStop(1, '#1c1917');
     ctx.fillStyle = groundGrad;
     ctx.beginPath();
-    ctx.moveTo(0, WORLD_H);
+    ctx.moveTo(0, WORLD_H + 20);
     for (let x = 0; x < WORLD_W; x++) {
       ctx.lineTo(x, this.terrain[x]);
     }
-    ctx.lineTo(WORLD_W, WORLD_H);
+    ctx.lineTo(WORLD_W, WORLD_H + 20);
     ctx.closePath();
     ctx.fill();
 
