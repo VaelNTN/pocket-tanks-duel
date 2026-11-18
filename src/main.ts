@@ -156,6 +156,15 @@ function showScreen(id: ScreenId): void {
   if (id === 'options') renderOptions();
 }
 
+function escapeHtml(str: string): string {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function updateHomePill(): void {
   const pill = document.getElementById('home-best');
   if (pill) {
@@ -173,7 +182,7 @@ function renderWeaponStrip(activeId: WeaponId): void {
   if (!strip) return;
   strip.innerHTML = WEAPONS.map(
     (w) =>
-      `<button class="weapon-chip ${w.id === activeId ? 'active' : ''}" data-weapon="${w.id}" title="${w.desc}">${w.icon} ${w.shortName}</button>`
+      `<button class="weapon-chip ${w.id === activeId ? 'active' : ''}" data-weapon="${w.id}" title="${escapeHtml(w.desc)}">${w.icon} ${escapeHtml(w.shortName)}</button>`
   ).join('');
   strip.querySelectorAll<HTMLButtonElement>('[data-weapon]').forEach((btn) => {
     btn.onclick = () => {
@@ -261,6 +270,7 @@ function startGame(mode: GameMode): void {
   if (!stage) {
     stage = new TanksStage(canvas, sfx, updateHud, handleMatchEnd);
   }
+  stage.setWeapon('standard');
   stage.startNewCampaign(mode, appState.tankSkin);
 }
 
@@ -274,7 +284,7 @@ function renderOptions(): void {
       (s) => `
       <button class="skin-card ${appState.tankSkin === s.id ? 'selected' : ''}" data-skin="${s.id}">
         <span class="swatch" style="background:${s.turret};"></span>
-        <span>${s.name}</span>
+        <span>${escapeHtml(s.name)}</span>
       </button>`
     ).join('');
     grid.querySelectorAll<HTMLButtonElement>('[data-skin]').forEach((btn) => {
@@ -317,7 +327,7 @@ async function renderHighscores(): Promise<void> {
         <div class="hs-left">
           <span class="hs-rank">#${i + 1}</span>
           <div>
-            <div class="hs-name">${h.playerName}</div>
+            <div class="hs-name">${escapeHtml(h.playerName)}</div>
             <div class="hs-meta">${h.wins} wins · Streak ${h.bestStreak}</div>
           </div>
         </div>
@@ -350,7 +360,7 @@ async function renderHighscores(): Promise<void> {
           <div class="hs-left">
             <span class="hs-rank">#${e.rank}</span>
             <div>
-              <div class="hs-name">${e.playerName} ${isMe ? '(You)' : ''}</div>
+              <div class="hs-name">${escapeHtml(e.playerName)} ${isMe ? '(You)' : ''}</div>
               <div class="hs-meta">${e.wins} wins · Streak ${e.bestStreak}</div>
             </div>
           </div>

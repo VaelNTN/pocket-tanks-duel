@@ -1,22 +1,32 @@
 export class SoundFX {
   private ctx: AudioContext | null = null;
   public enabled = true;
+  private lastFireAt = 0;
+  private lastExplodeAt = 0;
+  private lastBounceAt = 0;
 
   private ensureCtx(): AudioContext | null {
     if (!this.enabled) return null;
-    if (!this.ctx && typeof window !== 'undefined') {
-      const AC =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (AC) this.ctx = new AC();
+    try {
+      if (!this.ctx && typeof window !== 'undefined') {
+        const AC =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (AC) this.ctx = new AC();
+      }
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume().catch(() => {});
+      }
+      return this.ctx;
+    } catch {
+      return null;
     }
-    if (this.ctx && this.ctx.state === 'suspended') {
-      this.ctx.resume().catch(() => {});
-    }
-    return this.ctx;
   }
 
   public fire(heavy = false): void {
+    const nowMs = performance.now();
+    if (nowMs - this.lastFireAt < 50) return;
+    this.lastFireAt = nowMs;
     const ctx = this.ensureCtx();
     if (!ctx) return;
     const now = ctx.currentTime;
@@ -33,7 +43,27 @@ export class SoundFX {
     osc.stop(now + 0.31);
   }
 
+  public laser(): void {
+    const ctx = this.ensureCtx();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(980, now);
+    osc.frequency.exponentialRampToValueAtTime(190, now + 0.22);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.25);
+  }
+
   public explode(big = false): void {
+    const nowMs = performance.now();
+    if (nowMs - this.lastExplodeAt < 45) return;
+    this.lastExplodeAt = nowMs;
     const ctx = this.ensureCtx();
     if (!ctx) return;
     const now = ctx.currentTime;
@@ -53,7 +83,7 @@ export class SoundFX {
     filter.frequency.exponentialRampToValueAtTime(75, now + dur);
 
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(big ? 0.36 : 0.25, now);
+    gain.gain.setValueAtTime(big ? 0.34 : 0.24, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
 
     noise.connect(filter);
@@ -63,6 +93,9 @@ export class SoundFX {
   }
 
   public bounce(): void {
+    const nowMs = performance.now();
+    if (nowMs - this.lastBounceAt < 45) return;
+    this.lastBounceAt = nowMs;
     const ctx = this.ensureCtx();
     if (!ctx) return;
     const now = ctx.currentTime;
