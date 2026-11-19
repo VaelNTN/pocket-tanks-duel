@@ -1,4 +1,12 @@
-import { TANK_SKINS, WEAPONS, WeaponDef, WeaponId } from '../data/tanks';
+import {
+  MANA_REGEN_PER_TURN,
+  MAX_MANA_PER_ROUND,
+  START_MANA,
+  TANK_SKINS,
+  WEAPONS,
+  WeaponDef,
+  WeaponId,
+} from '../data/tanks';
 import { SoundFX } from './SoundFX';
 
 export type GameMode = 'ai' | 'pvp';
@@ -8,15 +16,18 @@ interface TankEntity {
   y: number;
   hp: number;
   maxHp: number;
+  mana: number;
+  maxMana: number;
   angleDeg: number; // 0..180 where 0 is right, 90 is up, 180 is left
   power: number; // 15..100
   fuel: number;
   skinId: number;
   label: string;
-  recoil: number; // 0..1 barrel recoil kick
-  muzzleFlash: number; // seconds left
-  wheelSpin: number; // radians for roadwheel spokes
-  hitFlash: number; // seconds left
+  isAi: boolean;
+  recoil: number;
+  muzzleFlash: number;
+  wheelSpin: number;
+  hitFlash: number;
 }
 
 interface Projectile {
@@ -25,7 +36,7 @@ interface Projectile {
   vx: number;
   vy: number;
   weaponId: WeaponId;
-  owner: 0 | 1;
+  owner: number;
   bouncesLeft: number;
   splitDone: boolean;
   digging: number;
@@ -108,6 +119,14 @@ interface CloudPuff {
   alpha: number;
 }
 
+interface WindStreak {
+  x: number;
+  y: number;
+  len: number;
+  speed: number;
+  alpha: number;
+}
+
 interface RockFleck {
   x: number;
   y: number;
@@ -118,11 +137,16 @@ interface RockFleck {
 }
 
 export interface HudSnapshot {
-  turn: 0 | 1;
+  turn: number;
+  turnLabel: string;
+  isPlayerTurn: boolean;
   mode: GameMode;
   wind: number;
-  p1Hp: number;
-  p2Hp: number;
+  activeHp: number;
+  activeMana: number;
+  maxMana: number;
+  aliveCount: number;
+  totalTanks: number;
   angle: number;
   power: number;
   fuel: number;
@@ -134,16 +158,19 @@ export interface HudSnapshot {
 }
 
 export interface MatchEndInfo {
-  winner: 0 | 1;
+  winner: number;
+  winnerLabel: string;
   score: number;
   streak: number;
   mode: GameMode;
   round: number;
 }
 
-const WORLD_W = 900;
+const TANK_COUNT = 5;
+const WORLD_W = 1040;
 const WORLD_H = 520;
 const GRAVITY = 270;
+const WIND_ACCEL = 6.8;
 
 export class TanksStage {
   private canvas: HTMLCanvasElement;
@@ -156,8 +183,9 @@ export class TanksStage {
   private scorch = new Float32Array(WORLD_W);
   private stars: { x: number; y: number; r: number; a: number; phase: number; speed: number }[] = [];
   private clouds: CloudPuff[] = [];
+  private windStreaks: WindStreak[] = [];
   private rockFlecks: RockFleck[] = [];
-  private tanks: [TankEntity, TankEntity];
+  private tanks: TankEntity[] = [];
   private projectiles: Projectile[] = [];
   private explosions: Explosion[] = [];
   private shockwaves: Shockwave[] = [];
@@ -167,8 +195,8 @@ export class TanksStage {
   private floats: FloatText[] = [];
 
   private mode: GameMode = 'ai';
-  private turn: 0 | 1 = 0;
-  private wind = 0;
+  private turn = 0;
+  private wind = 6.5;
   private selectedWeapon: WeaponId = 'standard';
   private round = 1;
   private score = 0;
@@ -210,9 +238,9 @@ export class TanksStage {
       });
     }
 
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < 8; i++) {
       this.clouds.push({
-        x: (i / 7) * (WORLD_W + 180) - 90,
+        x: (i / 8) * (WORLD_W + 180) - 90,
         y: 36 + (i % 3) * 44 + Math.random() * 22,
         scale: 0.75 + Math.random() * 0.65,
         speed: 4 + Math.random() * 6,
@@ -220,8 +248,18 @@ export class TanksStage {
       });
     }
 
+    for (let i = 0; i < 18; i++) {
+      this.windStreaks.push({
+        x: Math.random() * WORLD_W,
+        y: 28 + Math.random() * 220,
+        len: 28 + Math.random() * 44,
+        speed: 0.75 + Math.random() * 0.55,
+        alpha: 0.14 + Math.random() * 0.22,
+      });
+    }
+
     const fleckPalette = ['rgba(120,113,108,0.34)', 'rgba(68,64,60,0.42)', 'rgba(168,162,158,0.22)'];
-    for (let i = 0; i < 140; i++) {
+    for (let i = 0; i < 160; i++) {
       this.rockFlecks.push({
         x: Math.random() * WORLD_W,
         y: 165 + Math.random() * (WORLD_H - 170),
@@ -232,30 +270,52 @@ export class TanksStage {
       });
     }
 
-    this.tanks = [
-      this.makeTank(140, 300, 42, 0, 'P1'),
-      this.makeTank(760, 300, 138, 3, 'CPU'),
-    ];
-
+    this.setupRound();
     this.attachPointerAim();
   }
 
-  private makeTank(x: number, y: number, angleDeg: number, skinId: number, label: string): TankEntity {
+  private makeTank(
+    x: number,
+    y: number,
+    angleDeg: number,
+    skinId: number,
+    label: string,
+    isAi: boolean
+  ): TankEntity {
     return {
       x,
       y,
       hp: 100,
       maxHp: 100,
+      mana: START_MANA,
+      maxMana: MAX_MANA_PER_ROUND,
       angleDeg,
       power: 68,
       fuel: 100,
       skinId,
       label,
+      isAi,
       recoil: 0,
       muzzleFlash: 0,
       wheelSpin: 0,
       hitFlash: 0,
     };
+  }
+
+  /**
+   * Always rolls a noticeable non-zero wind (|wind| between 3.5 and 16.0)
+   * that shifts clearly from the previous turn so players must adjust every turn!
+   */
+  private rollNewWind(prevWind: number | null): number {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const sign = Math.random() < 0.5 ? -1 : 1;
+      const mag = 3.5 + Math.random() * 12.5;
+      const candidate = Math.round(sign * mag * 10) / 10;
+      if (prevWind === null || Math.abs(candidate - prevWind) >= 4.0) {
+        return candidate;
+      }
+    }
+    return prevWind && prevWind > 0 ? -8.5 : 8.5;
   }
 
   public startNewCampaign(mode: GameMode, playerSkinId: number): void {
@@ -292,12 +352,23 @@ export class TanksStage {
   }
 
   public setWeapon(id: WeaponId): void {
+    const active = this.tanks[this.turn];
+    const def = WEAPONS.find((w) => w.id === id);
+    if (!def) return;
+    if (active && def.manaCost > active.mana) {
+      return;
+    }
     this.selectedWeapon = id;
     this.emitHud();
   }
 
+  private isHumanControlledTurn(): boolean {
+    const active = this.tanks[this.turn];
+    return Boolean(active && !active.isAi && active.hp > 0);
+  }
+
   public adjustAngle(delta: number): void {
-    if (this.isBusy() || (this.mode === 'ai' && this.turn === 1) || this.matchOver) return;
+    if (this.isBusy() || !this.isHumanControlledTurn() || this.matchOver) return;
     if (!Number.isFinite(delta)) return;
     const t = this.tanks[this.turn];
     t.angleDeg = Math.max(5, Math.min(175, Math.round(t.angleDeg + delta)));
@@ -305,7 +376,7 @@ export class TanksStage {
   }
 
   public setAngle(deg: number): void {
-    if (this.isBusy() || (this.mode === 'ai' && this.turn === 1) || this.matchOver) return;
+    if (this.isBusy() || !this.isHumanControlledTurn() || this.matchOver) return;
     if (!Number.isFinite(deg)) return;
     const t = this.tanks[this.turn];
     t.angleDeg = Math.max(5, Math.min(175, Math.round(deg)));
@@ -313,7 +384,7 @@ export class TanksStage {
   }
 
   public adjustPower(delta: number): void {
-    if (this.isBusy() || (this.mode === 'ai' && this.turn === 1) || this.matchOver) return;
+    if (this.isBusy() || !this.isHumanControlledTurn() || this.matchOver) return;
     if (!Number.isFinite(delta)) return;
     const t = this.tanks[this.turn];
     t.power = Math.max(15, Math.min(100, Math.round(t.power + delta)));
@@ -321,7 +392,7 @@ export class TanksStage {
   }
 
   public setPower(pwr: number): void {
-    if (this.isBusy() || (this.mode === 'ai' && this.turn === 1) || this.matchOver) return;
+    if (this.isBusy() || !this.isHumanControlledTurn() || this.matchOver) return;
     if (!Number.isFinite(pwr)) return;
     const t = this.tanks[this.turn];
     t.power = Math.max(15, Math.min(100, Math.round(pwr)));
@@ -329,13 +400,13 @@ export class TanksStage {
   }
 
   public moveTank(dir: -1 | 1): void {
-    if (this.isBusy() || (this.mode === 'ai' && this.turn === 1) || this.matchOver) return;
+    if (this.isBusy() || !this.isHumanControlledTurn() || this.matchOver) return;
     const t = this.tanks[this.turn];
     if (t.fuel <= 0) return;
     const nextX = Math.max(32, Math.min(WORLD_W - 32, t.x + dir * 16));
     const currentGround = this.sampleTerrain(t.x);
     const nextGround = this.sampleTerrain(nextX);
-    if (currentGround - nextGround > 26) return; // too steep
+    if (currentGround - nextGround > 26) return;
     t.wheelSpin += (nextX - t.x) * 0.18;
     t.x = nextX;
     t.y = nextGround;
@@ -345,29 +416,38 @@ export class TanksStage {
 
   public fireCurrentWeapon(): void {
     if (this.isBusy() || this.matchOver) return;
-    if (this.mode === 'ai' && this.turn === 1) return;
-    this.launchWeapon(this.turn, this.selectedWeapon);
+    if (!this.isHumanControlledTurn()) return;
+    const active = this.tanks[this.turn];
+    const def = WEAPONS.find((w) => w.id === this.selectedWeapon) || WEAPONS[0];
+    const weaponToFire: WeaponId = def.manaCost <= active.mana ? def.id : 'standard';
+    this.selectedWeapon = weaponToFire;
+    this.launchWeapon(this.turn, weaponToFire);
   }
 
   private setupRound(): void {
     this.generateTerrain();
-    const aiSkin = (this.playerSkinId + 3) % TANK_SKINS.length;
-    const x1 = 90 + Math.random() * 140;
-    const x2 = WORLD_W - (90 + Math.random() * 140);
-    this.tanks = [
-      {
-        ...this.makeTank(x1, this.sampleTerrain(x1), 45, this.playerSkinId, 'YOU'),
-      },
-      {
-        ...this.makeTank(
-          x2,
-          this.sampleTerrain(x2),
-          135,
-          aiSkin,
-          this.mode === 'ai' ? `CPU Lv.${this.round}` : 'P2'
-        ),
-      },
-    ];
+
+    // Always spawn 5 distinct tanks evenly distributed across the terrain!
+    this.tanks = [];
+    const margin = 72;
+    const usableW = WORLD_W - margin * 2;
+    const slotW = usableW / (TANK_COUNT - 1);
+
+    for (let i = 0; i < TANK_COUNT; i++) {
+      const jitter = (Math.random() - 0.5) * 46;
+      const x = Math.max(46, Math.min(WORLD_W - 46, margin + i * slotW + jitter));
+      const defaultAngle = i < 2 ? 48 : i === 2 ? 78 : 132;
+      const skinId = (this.playerSkinId + i) % TANK_SKINS.length;
+      const isAi = this.mode === 'ai' && i > 0;
+      const label =
+        this.mode === 'ai'
+          ? i === 0
+            ? 'YOU'
+            : `CPU ${i}`
+          : `P${i + 1}`;
+      this.tanks.push(this.makeTank(x, this.sampleTerrain(x), defaultAngle, skinId, label, isAi));
+    }
+
     this.projectiles = [];
     this.explosions = [];
     this.shockwaves = [];
@@ -376,27 +456,28 @@ export class TanksStage {
     this.debris = [];
     this.floats = [];
     this.turn = 0;
+    this.selectedWeapon = 'standard';
     this.matchOver = false;
     this.aiTimer = 0;
     this.shake = 0;
     this.draggingAim = false;
     this.activePointerId = null;
-    this.wind = Math.round((Math.random() * 24 - 12) * 10) / 10;
+    this.wind = this.rollNewWind(null);
     this.emitHud();
   }
 
   private generateTerrain(): void {
-    const base = 315 + Math.random() * 45;
-    const amp1 = 55 + Math.random() * 45;
-    const amp2 = 24 + Math.random() * 30;
+    const base = 315 + Math.random() * 42;
+    const amp1 = 52 + Math.random() * 44;
+    const amp2 = 22 + Math.random() * 28;
     const ph1 = Math.random() * Math.PI * 2;
     const ph2 = Math.random() * Math.PI * 2;
-    const midPeak = (Math.random() - 0.3) * 75;
+    const midPeak = (Math.random() - 0.35) * 70;
 
     for (let x = 0; x < WORLD_W; x++) {
       const nx = x / WORLD_W;
-      const hill = Math.sin(nx * Math.PI * 2.2 + ph1) * amp1 + Math.sin(nx * Math.PI * 5.4 + ph2) * amp2;
-      const centerBump = Math.exp(-Math.pow((nx - 0.5) / 0.16, 2)) * midPeak;
+      const hill = Math.sin(nx * Math.PI * 2.4 + ph1) * amp1 + Math.sin(nx * Math.PI * 5.6 + ph2) * amp2;
+      const centerBump = Math.exp(-Math.pow((nx - 0.5) / 0.18, 2)) * midPeak;
       const y = Math.max(150, Math.min(WORLD_H - 36, base - hill - centerBump));
       this.terrain[x] = y;
       this.scorch[x] = 0;
@@ -413,8 +494,16 @@ export class TanksStage {
     return this.projectiles.length > 0 || this.aiTimer > 0;
   }
 
-  private launchWeapon(owner: 0 | 1, weaponId: WeaponId): void {
+  private launchWeapon(owner: number, weaponId: WeaponId): void {
     const t = this.tanks[owner];
+    const def = WEAPONS.find((w) => w.id === weaponId) || WEAPONS[0];
+    // Deduct weapon mana cost (Standard Shell costs 0!)
+    if (def.manaCost > t.mana) {
+      weaponId = 'standard';
+    } else {
+      t.mana = Math.max(0, t.mana - def.manaCost);
+    }
+
     const rad = (t.angleDeg * Math.PI) / 180;
     const barrelLen = 25;
     const mx = t.x + Math.cos(rad) * barrelLen;
@@ -424,6 +513,18 @@ export class TanksStage {
     t.muzzleFlash = 0.14;
     this.draggingAim = false;
     this.activePointerId = null;
+
+    if (def.manaCost > 0) {
+      this.floats.push({
+        x: t.x,
+        y: t.y - 52,
+        vy: -38,
+        text: `-${def.manaCost} 💎`,
+        color: '#38bdf8',
+        life: 0.9,
+        maxLife: 0.9,
+      });
+    }
 
     // Muzzle blast smoke & sparks
     for (let i = 0; i < 8; i++) {
@@ -449,7 +550,7 @@ export class TanksStage {
       return;
     }
 
-    const speed = weaponId === 'firerain' ? t.power * 6.4 : t.power * 6.8;
+    const speed = weaponId === 'firerain' ? t.power * 6.5 : t.power * 7.0;
     const count = weaponId === 'firerain' ? 5 : 1;
     this.sfx.fire(weaponId === 'nuke' || weaponId === 'quake');
 
@@ -474,13 +575,28 @@ export class TanksStage {
     this.emitHud();
   }
 
-  private traceLaserHit(sx: number, sy: number, rad: number, owner: 0 | 1): { hx: number; hy: number } {
+  private findNearestEnemy(owner: number, fromX: number, fromY: number): TankEntity | null {
+    let best: TankEntity | null = null;
+    let bestDist = Infinity;
+    for (let i = 0; i < this.tanks.length; i++) {
+      if (i === owner) continue;
+      const tk = this.tanks[i];
+      if (tk.hp <= 0) continue;
+      const d = Math.hypot(tk.x - fromX, tk.y - fromY);
+      if (d < bestDist) {
+        bestDist = d;
+        best = tk;
+      }
+    }
+    return best;
+  }
+
+  private traceLaserHit(sx: number, sy: number, rad: number, owner: number): { hx: number; hy: number } {
     const dx = Math.cos(rad);
     const dy = -Math.sin(rad);
     let hx = sx;
     let hy = sy;
-    const opp = this.tanks[owner === 0 ? 1 : 0];
-    for (let step = 4; step < 1150; step += 4) {
+    for (let step = 4; step < 1250; step += 4) {
       const cx = sx + dx * step;
       const cy = sy + dy * step;
       if (cx < 0 || cx >= WORLD_W || cy > WORLD_H) {
@@ -488,7 +604,15 @@ export class TanksStage {
         hy = cy;
         break;
       }
-      if (Math.hypot(cx - opp.x, cy - (opp.y - 10)) < 18 || (cy >= 0 && cy >= this.sampleTerrain(cx))) {
+      let hitEnemy = false;
+      for (let i = 0; i < this.tanks.length; i++) {
+        if (i === owner || this.tanks[i].hp <= 0) continue;
+        if (Math.hypot(cx - this.tanks[i].x, cy - (this.tanks[i].y - 10)) < 18) {
+          hitEnemy = true;
+          break;
+        }
+      }
+      if (hitEnemy || (cy >= 0 && cy >= this.sampleTerrain(cx))) {
         hx = cx;
         hy = cy;
         break;
@@ -499,7 +623,7 @@ export class TanksStage {
     return { hx, hy };
   }
 
-  private fireLaserRay(sx: number, sy: number, rad: number, owner: 0 | 1): void {
+  private fireLaserRay(sx: number, sy: number, rad: number, owner: number): void {
     const { hx, hy } = this.traceLaserHit(sx, sy, rad, owner);
 
     this.laserBeams.push({
@@ -556,12 +680,18 @@ export class TanksStage {
     this.elapsed += dt;
     if (this.shake > 0) this.shake = Math.max(0, this.shake - dt * 26);
 
-    // Drift clouds gently with wind
-    const cloudDrift = 4 + this.wind * 1.4;
+    // Drift clouds & visible wind streaks with current wind!
+    const cloudDrift = this.wind * 2.1;
     for (const c of this.clouds) {
-      c.x += (c.speed * 0.4 + cloudDrift) * dt;
+      c.x += (c.speed * 0.25 * Math.sign(this.wind || 1) + cloudDrift) * dt;
       if (c.x > WORLD_W + 140) c.x = -140;
       if (c.x < -150) c.x = WORLD_W + 130;
+    }
+
+    for (const ws of this.windStreaks) {
+      ws.x += this.wind * 16 * ws.speed * dt;
+      if (ws.x > WORLD_W + 80) ws.x = -80;
+      if (ws.x < -80) ws.x = WORLD_W + 80;
     }
 
     // Settle tanks & decay recoil / flashes
@@ -587,7 +717,6 @@ export class TanksStage {
       p.trail.push({ x: p.x, y: p.y });
       if (p.trail.length > 24) p.trail.shift();
 
-      // Smoky rocket/shell trail
       p.smokeAcc += dt;
       if (p.smokeAcc >= 0.024) {
         p.smokeAcc = 0;
@@ -595,7 +724,7 @@ export class TanksStage {
         this.pushParticle({
           x: p.x + (Math.random() - 0.5) * 2,
           y: p.y + (Math.random() - 0.5) * 2,
-          vx: -p.vx * 0.04 + this.wind * 1.4,
+          vx: -p.vx * 0.04 + this.wind * 1.8,
           vy: -p.vy * 0.04 - 10,
           color: p.weaponId === 'firerain' || p.weaponId === 'nuke' ? def.color : 'rgba(203, 213, 225, 0.55)',
           size: p.weaponId === 'nuke' ? 4.2 : 2.6,
@@ -619,15 +748,17 @@ export class TanksStage {
         continue;
       }
 
-      // Wind & Gravity
-      p.vx += this.wind * 5.2 * dt;
+      // Meaningful Wind & Gravity
+      p.vx += this.wind * WIND_ACCEL * dt;
       p.vy += GRAVITY * dt;
 
-      // Seeker homing on descent
+      // Seeker homing on descent toward nearest living enemy
       if (p.weaponId === 'seeker' && p.vy > 0) {
-        const target = this.tanks[p.owner === 0 ? 1 : 0];
-        const dx = target.x - p.x;
-        p.vx += Math.sign(dx) * Math.min(180, Math.abs(dx) * 1.4) * dt;
+        const target = this.findNearestEnemy(p.owner, p.x, p.y);
+        if (target) {
+          const dx = target.x - p.x;
+          p.vx += Math.sign(dx) * Math.min(190, Math.abs(dx) * 1.5) * dt;
+        }
       }
 
       // Splitter at apex
@@ -655,18 +786,18 @@ export class TanksStage {
       p.x += p.vx * dt;
       p.y += p.vy * dt;
 
-      // Out of bounds
       if (p.x < -30 || p.x > WORLD_W + 30 || p.y > WORLD_H + 40) {
         this.projectiles.splice(i, 1);
         if (this.projectiles.length === 0) this.endTurnAfterDelay();
         continue;
       }
 
-      // Tank direct collision check
+      // Direct collision check across all 5 living tanks
       let hitTank = false;
-      for (let ti = 0; ti < 2; ti++) {
-        if (p.age < 0.14 && ti === p.owner) continue;
+      for (let ti = 0; ti < this.tanks.length; ti++) {
         const tk = this.tanks[ti];
+        if (tk.hp <= 0) continue;
+        if (p.age < 0.14 && ti === p.owner) continue;
         if (Math.hypot(p.x - tk.x, p.y - (tk.y - 10)) <= 18) {
           hitTank = true;
           break;
@@ -692,25 +823,21 @@ export class TanksStage {
       }
     }
 
-    // Explosions
     for (let i = this.explosions.length - 1; i >= 0; i--) {
       this.explosions[i].life -= dt;
       if (this.explosions[i].life <= 0) this.explosions.splice(i, 1);
     }
 
-    // Shockwaves
     for (let i = this.shockwaves.length - 1; i >= 0; i--) {
       this.shockwaves[i].life -= dt;
       if (this.shockwaves[i].life <= 0) this.shockwaves.splice(i, 1);
     }
 
-    // Laser beams
     for (let i = this.laserBeams.length - 1; i >= 0; i--) {
       this.laserBeams[i].life -= dt;
       if (this.laserBeams[i].life <= 0) this.laserBeams.splice(i, 1);
     }
 
-    // Particles
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const pt = this.particles[i];
       pt.x += pt.vx * dt;
@@ -726,7 +853,6 @@ export class TanksStage {
       if (pt.life <= 0) this.particles.splice(i, 1);
     }
 
-    // Debris chunks
     for (let i = this.debris.length - 1; i >= 0; i--) {
       const d = this.debris[i];
       d.x += d.vx * dt;
@@ -737,7 +863,6 @@ export class TanksStage {
       if (d.life <= 0 || d.y > WORLD_H + 20) this.debris.splice(i, 1);
     }
 
-    // Float texts
     for (let i = this.floats.length - 1; i >= 0; i--) {
       const f = this.floats[i];
       f.y += f.vy * dt;
@@ -747,7 +872,8 @@ export class TanksStage {
     }
 
     // AI Turn timer
-    if (!this.matchOver && this.mode === 'ai' && this.turn === 1 && this.aiTimer > 0 && this.projectiles.length === 0) {
+    const active = this.tanks[this.turn];
+    if (!this.matchOver && active && active.isAi && this.aiTimer > 0 && this.projectiles.length === 0) {
       this.aiTimer -= dt;
       if (this.aiTimer <= 0) {
         this.executeAiShot();
@@ -760,7 +886,7 @@ export class TanksStage {
     this.detonateAt(p.x, Math.min(WORLD_H - 12, p.y), def, p.owner);
   }
 
-  private detonateAt(cx: number, cy: number, def: WeaponDef, attacker: 0 | 1): void {
+  private detonateAt(cx: number, cy: number, def: WeaponDef, attacker: number): void {
     if (!Number.isFinite(cx) || !Number.isFinite(cy)) return;
     const isMound = def.id === 'mound';
     const big = def.radius >= 50;
@@ -790,7 +916,6 @@ export class TanksStage {
       });
     }
 
-    // Sparks + smoke plume
     const sparkCount = big ? 34 : 18;
     for (let i = 0; i < sparkCount; i++) {
       const ang = Math.random() * Math.PI * 2;
@@ -822,7 +947,6 @@ export class TanksStage {
       });
     }
 
-    // Flying terrain debris chunks
     const debrisCount = isMound ? 8 : big ? 18 : 10;
     const debrisColors = isMound ? ['#d97706', '#fcd34d', '#b45309'] : ['#78716c', '#57534e', '#4d7c0f', '#292524'];
     for (let i = 0; i < debrisCount && this.debris.length < 140; i++) {
@@ -842,7 +966,7 @@ export class TanksStage {
       });
     }
 
-    // Deform terrain & mark scorched rim
+    // Deform terrain
     const r = def.radius;
     const minX = Math.max(0, Math.floor(cx - r));
     const maxX = Math.min(WORLD_W - 1, Math.ceil(cx + r));
@@ -863,14 +987,16 @@ export class TanksStage {
       }
     }
 
-    // Damage tanks in blast radius
+    // Damage all living tanks within blast radius
     const blastRange = def.radius + 18;
-    for (let ti = 0; ti < 2; ti++) {
+    for (let ti = 0; ti < this.tanks.length; ti++) {
       const tk = this.tanks[ti];
+      if (tk.hp <= 0) continue;
       const dist = Math.hypot(tk.x - cx, tk.y - 10 - cy);
       if (dist <= blastRange) {
         const falloff = Math.max(0.25, 1 - dist / (blastRange + 8));
         const dmg = Math.max(4, Math.round(def.damage * falloff));
+        const wasAlive = tk.hp > 0;
         tk.hp = Math.max(0, tk.hp - dmg);
         tk.hitFlash = 0.18;
         if (this.floats.length < 40) {
@@ -878,37 +1004,53 @@ export class TanksStage {
             x: tk.x,
             y: tk.y - 38,
             vy: -52,
-            text: `-${dmg}`,
-            color: ti === 1 ? '#fde047' : '#f87171',
-            life: 1.1,
-            maxLife: 1.1,
-            big: dmg >= 35,
+            text: tk.hp <= 0 && wasAlive ? `💥 KO! -${dmg}` : `-${dmg}`,
+            color: ti !== 0 ? '#fde047' : '#f87171',
+            life: 1.2,
+            maxLife: 1.2,
+            big: dmg >= 35 || tk.hp <= 0,
           });
         }
-        if (!this.matchOver && attacker === 0 && ti === 1) {
-          this.score += dmg * 10;
+        if (!this.matchOver && attacker === 0 && ti !== 0) {
+          this.score += dmg * 10 + (tk.hp <= 0 ? 150 : 0);
         }
       }
     }
 
-    // Check match end (guarded so multi-shell hits cannot fire onMatchEnd twice)
-    if (!this.matchOver && (this.tanks[0].hp <= 0 || this.tanks[1].hp <= 0)) {
-      this.matchOver = true;
-      const winner: 0 | 1 = this.tanks[1].hp <= 0 ? 0 : 1;
-      if (winner === 0) {
-        this.streak += 1;
-        this.score += 250 + this.tanks[0].hp * 3 + this.round * 100;
-        this.sfx.victory();
-      } else {
+    // Check match end: In AI mode, Player loses immediately if YOU dies, or wins if all 4 CPUs die.
+    // In 5P mode, last tank standing wins!
+    if (!this.matchOver) {
+      const living = this.tanks.map((t, idx) => ({ t, idx })).filter((x) => x.t.hp > 0);
+      if (this.mode === 'ai' && this.tanks[0].hp <= 0) {
+        this.matchOver = true;
         this.streak = 0;
+        const survivor = living[0];
+        this.onMatchEnd({
+          winner: survivor ? survivor.idx : 1,
+          winnerLabel: survivor ? survivor.t.label : 'CPU',
+          score: this.score,
+          streak: this.streak,
+          mode: this.mode,
+          round: this.round,
+        });
+      } else if (living.length <= 1) {
+        this.matchOver = true;
+        const winIdx = living[0] ? living[0].idx : 0;
+        const winLabel = living[0] ? living[0].t.label : 'DRAW';
+        if (this.mode === 'ai' && winIdx === 0) {
+          this.streak += 1;
+          this.score += 400 + this.tanks[0].hp * 3 + this.round * 150;
+          this.sfx.victory();
+        }
+        this.onMatchEnd({
+          winner: winIdx,
+          winnerLabel: winLabel,
+          score: this.score,
+          streak: this.streak,
+          mode: this.mode,
+          round: this.round,
+        });
       }
-      this.onMatchEnd({
-        winner,
-        score: this.score,
-        streak: this.streak,
-        mode: this.mode,
-        round: this.round,
-      });
     }
     this.emitHud();
   }
@@ -918,35 +1060,73 @@ export class TanksStage {
       this.emitHud();
       return;
     }
-    this.turn = this.turn === 0 ? 1 : 0;
-    this.tanks[this.turn].fuel = 100;
-    this.wind = Math.max(-12, Math.min(12, Math.round((this.wind + (Math.random() * 6 - 3)) * 10) / 10));
-    if (this.mode === 'ai' && this.turn === 1) {
-      this.aiTimer = 0.75;
+
+    // Advance turn to next living tank in the 5-tank ring!
+    let nextTurn = this.turn;
+    for (let step = 1; step <= this.tanks.length; step++) {
+      const candidate = (this.turn + step) % this.tanks.length;
+      if (this.tanks[candidate].hp > 0) {
+        nextTurn = candidate;
+        break;
+      }
+    }
+
+    this.turn = nextTurn;
+    const active = this.tanks[this.turn];
+    active.fuel = 100;
+    // Regenerate Mana at start of tank's turn, capped at MAX_MANA_PER_ROUND (100)!
+    active.mana = Math.min(active.maxMana, active.mana + MANA_REGEN_PER_TURN);
+
+    // Every single turn gets a brand-new, noticeable wind value!
+    this.wind = this.rollNewWind(this.wind);
+
+    // If current selected weapon costs more than the active tank's mana, fallback to free Standard Shell
+    const curWeapon = WEAPONS.find((w) => w.id === this.selectedWeapon) || WEAPONS[0];
+    if (curWeapon.manaCost > active.mana) {
+      this.selectedWeapon = 'standard';
+    }
+
+    if (active.isAi) {
+      this.aiTimer = 0.72;
     }
     this.emitHud();
   }
 
   private executeAiShot(): void {
     if (this.matchOver) return;
-    const ai = this.tanks[1];
-    const target = this.tanks[0];
+    const ai = this.tanks[this.turn];
+    if (!ai || ai.hp <= 0) {
+      this.endTurnAfterDelay();
+      return;
+    }
 
-    let bestAngle = 135;
+    // Pick a living target (prefer Player 55% of the time, or nearest rival tank 45% for real 5-tank chaos!)
+    const enemies = this.tanks.filter((t, idx) => idx !== this.turn && t.hp > 0);
+    if (enemies.length === 0) return;
+    const target =
+      this.tanks[0].hp > 0 && Math.random() < 0.55
+        ? this.tanks[0]
+        : enemies.sort((a, b) => Math.abs(a.x - ai.x) - Math.abs(b.x - ai.x))[0];
+
+    const shootRight = target.x >= ai.x;
+    const minAng = shootRight ? 22 : 112;
+    const maxAng = shootRight ? 74 : 158;
+
+    let bestAngle = shootRight ? 46 : 134;
     let bestPower = 68;
     let bestDist = Infinity;
 
-    for (let angle = 112; angle <= 158; angle += 4) {
-      for (let power = 35; power <= 96; power += 4) {
+    for (let angle = minAng; angle <= maxAng; angle += 4) {
+      for (let power = 32; power <= 96; power += 4) {
         const rad = (angle * Math.PI) / 180;
         let x = ai.x + Math.cos(rad) * 25;
         let y = ai.y - 13 - Math.sin(rad) * 25;
-        let vx = Math.cos(rad) * power * 6.8;
-        let vy = -Math.sin(rad) * power * 6.8;
+        let vx = Math.cos(rad) * power * 7.0;
+        let vy = -Math.sin(rad) * power * 7.0;
 
         for (let step = 0; step < 120; step++) {
           const dt = 0.03;
-          vx += this.wind * 5.2 * dt;
+          vx += this.wind * WIND_ACCEL * dt;
           vy += GRAVITY * dt;
           x += vx * dt;
           y += vy * dt;
@@ -964,23 +1144,35 @@ export class TanksStage {
       }
     }
 
-    const jitterScale = Math.max(0.25, 1.35 - this.round * 0.16);
-    ai.angleDeg = Math.max(95, Math.min(172, Math.round(bestAngle + (Math.random() - 0.5) * 8 * jitterScale)));
-    ai.power = Math.max(20, Math.min(100, Math.round(bestPower + (Math.random() - 0.5) * 10 * jitterScale)));
+    const jitterScale = Math.max(0.3, 1.35 - this.round * 0.14);
+    ai.angleDeg = Math.max(10, Math.min(170, Math.round(bestAngle + (Math.random() - 0.5) * 9 * jitterScale)));
+    ai.power = Math.max(20, Math.min(100, Math.round(bestPower + (Math.random() - 0.5) * 11 * jitterScale)));
 
-    const aiWeapons: WeaponId[] = ['standard', 'splitter', 'bouncer', 'firerain', 'seeker', 'nuke'];
-    const pick = aiWeapons[Math.floor(Math.random() * Math.min(aiWeapons.length, 2 + this.round))];
-    this.launchWeapon(1, pick);
+    // AI obeys the exact same Mana cost rules!
+    const affordable = WEAPONS.filter((w) => w.manaCost <= ai.mana && w.id !== 'mound');
+    const special = affordable.filter((w) => w.manaCost > 0);
+    const chosen =
+      special.length > 0 && Math.random() < 0.55
+        ? special[Math.floor(Math.random() * special.length)].id
+        : 'standard';
+
+    this.launchWeapon(this.turn, chosen);
   }
 
   private emitHud(): void {
-    const active = this.tanks[this.turn];
+    const active = this.tanks[this.turn] || this.tanks[0];
+    const aliveCount = this.tanks.filter((t) => t.hp > 0).length;
     this.onHud({
       turn: this.turn,
+      turnLabel: active.label,
+      isPlayerTurn: !active.isAi && active.hp > 0,
       mode: this.mode,
       wind: this.wind,
-      p1Hp: this.tanks[0].hp,
-      p2Hp: this.tanks[1].hp,
+      activeHp: active.hp,
+      activeMana: active.mana,
+      maxMana: active.maxMana,
+      aliveCount,
+      totalTanks: this.tanks.length,
       angle: active.angleDeg,
       power: active.power,
       fuel: active.fuel,
@@ -1019,7 +1211,7 @@ export class TanksStage {
     };
 
     const aimAt = (clientX: number, clientY: number) => {
-      if (this.isBusy() || (this.mode === 'ai' && this.turn === 1) || this.matchOver) return;
+      if (this.isBusy() || !this.isHumanControlledTurn() || this.matchOver) return;
       const w = toWorld(clientX, clientY);
       if (!w) return;
       const t = this.tanks[this.turn];
@@ -1030,7 +1222,7 @@ export class TanksStage {
       const dist = Math.hypot(dx, dy);
       if (!Number.isFinite(deg) || !Number.isFinite(dist)) return;
       t.angleDeg = Math.max(5, Math.min(175, deg));
-      t.power = Math.max(18, Math.min(100, Math.round((dist / 240) * 100)));
+      t.power = Math.max(18, Math.min(100, Math.round((dist / 250) * 100)));
       this.emitHud();
     };
 
@@ -1046,7 +1238,7 @@ export class TanksStage {
       try {
         this.canvas.setPointerCapture(e.pointerId);
       } catch {
-        // ignore if unsupported
+        // ignore
       }
       aimAt(e.clientX, e.clientY);
     };
@@ -1070,11 +1262,8 @@ export class TanksStage {
     };
 
     const onVisibility = () => {
-      if (document.hidden) {
-        stopDrag();
-      } else {
-        this.lastTs = performance.now();
-      }
+      if (document.hidden) stopDrag();
+      else this.lastTs = performance.now();
     };
 
     const onResize = () => {
@@ -1131,7 +1320,7 @@ export class TanksStage {
     const skyLeft = vt.leftWorldX - 24;
     const skyW = vt.viewWorldW + 48;
 
-    // 1. Multi-stop twilight atmospheric sky gradient
+    // 1. Twilight sky gradient
     const sky = ctx.createLinearGradient(0, skyTop, 0, WORLD_H);
     sky.addColorStop(0, '#040814');
     sky.addColorStop(0.32, '#0c1836');
@@ -1141,7 +1330,7 @@ export class TanksStage {
     ctx.fillStyle = sky;
     ctx.fillRect(skyLeft, skyTop, skyW, WORLD_H - skyTop + 40);
 
-    // 2. Twinkling stars + subtle crescent moon
+    // 2. Twinkling stars + moon
     for (const s of this.stars) {
       if (s.y < skyTop) continue;
       const twinkle = 0.55 + 0.45 * Math.sin(this.elapsed * s.speed + s.phase);
@@ -1151,7 +1340,7 @@ export class TanksStage {
       ctx.fill();
     }
 
-    const moonX = WORLD_W * 0.82;
+    const moonX = WORLD_W * 0.84;
     const moonY = Math.max(skyTop + 62, 66);
     const moonGlow = ctx.createRadialGradient(moonX, moonY, 6, moonX, moonY, 54);
     moonGlow.addColorStop(0, 'rgba(254, 243, 199, 0.32)');
@@ -1170,7 +1359,7 @@ export class TanksStage {
     ctx.arc(moonX + 6, moonY - 4, 13.5, 0, Math.PI * 2);
     ctx.fill();
 
-    // 3. Drifting parallax clouds
+    // 3. Clouds & Animated Wind Streaks!
     for (const c of this.clouds) {
       ctx.save();
       ctx.translate(c.x, c.y);
@@ -1185,12 +1374,26 @@ export class TanksStage {
       ctx.restore();
     }
 
-    // 4. Distant layered mountain silhouettes (3 depth bands)
+    ctx.save();
+    ctx.lineCap = 'round';
+    for (const ws of this.windStreaks) {
+      const dir = Math.sign(this.wind || 1);
+      const streakLen = ws.len * (0.55 + Math.abs(this.wind) / 14);
+      ctx.strokeStyle = `rgba(186, 230, 253, ${ws.alpha.toFixed(2)})`;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(ws.x, ws.y);
+      ctx.lineTo(ws.x + dir * streakLen, ws.y);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // 4. Mountain layers
     this.drawMountainLayer(skyLeft, skyW, 225, 0.0085, 0.019, 44, 18, 'rgba(15, 23, 42, 0.42)');
     this.drawMountainLayer(skyLeft, skyW, 255, 0.013, 0.027, 36, 20, 'rgba(24, 33, 56, 0.62)');
     this.drawMountainLayer(skyLeft, skyW, 290, 0.019, 0.041, 24, 14, 'rgba(30, 41, 59, 0.78)');
 
-    // 5. Destructible terrain with geological strata & rock flecks
+    // 5. Destructible terrain
     ctx.save();
     ctx.beginPath();
     ctx.moveTo(0, WORLD_H + 24);
@@ -1201,7 +1404,6 @@ export class TanksStage {
     ctx.closePath();
     ctx.clip();
 
-    // Base soil/rock gradient
     const groundGrad = ctx.createLinearGradient(0, 150, 0, WORLD_H);
     groundGrad.addColorStop(0, '#57534e');
     groundGrad.addColorStop(0.28, '#44403c');
@@ -1210,7 +1412,6 @@ export class TanksStage {
     ctx.fillStyle = groundGrad;
     ctx.fillRect(0, 110, WORLD_W, WORLD_H - 90);
 
-    // Wavy geological strata bands
     const strata = [
       { y: 260, amp: 14, freq: 0.014, color: 'rgba(120, 113, 108, 0.22)' },
       { y: 335, amp: 16, freq: 0.018, color: 'rgba(87, 83, 78, 0.34)' },
@@ -1228,7 +1429,6 @@ export class TanksStage {
       ctx.fill();
     }
 
-    // Embedded pebbles & mineral flecks
     for (const rf of this.rockFlecks) {
       ctx.save();
       ctx.translate(rf.x, rf.y);
@@ -1240,7 +1440,6 @@ export class TanksStage {
       ctx.restore();
     }
 
-    // Topsoil thickness just under surface contour
     ctx.strokeStyle = '#3f6212';
     ctx.lineWidth = 10;
     ctx.lineJoin = 'round';
@@ -1251,7 +1450,6 @@ export class TanksStage {
     }
     ctx.stroke();
 
-    // Charred scorch overlay on crater rims
     ctx.strokeStyle = 'rgba(28, 25, 23, 0.92)';
     ctx.lineWidth = 11;
     ctx.beginPath();
@@ -1271,7 +1469,6 @@ export class TanksStage {
     ctx.stroke();
     ctx.restore();
 
-    // Top lush grass rim & organic grass tufts (on un-scorched slopes)
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     ctx.strokeStyle = '#a3e635';
@@ -1292,7 +1489,6 @@ export class TanksStage {
     }
     ctx.stroke();
 
-    // Small grass blade tufts along intact gentle slopes
     ctx.strokeStyle = '#bef264';
     ctx.lineWidth = 1.4;
     ctx.beginPath();
@@ -1301,7 +1497,7 @@ export class TanksStage {
       const slope = Math.abs(this.terrain[x + 2] - this.terrain[x - 2]);
       if (slope > 5.5) continue;
       const gy = this.terrain[x];
-      const sway = Math.sin(this.elapsed * 2 + x * 0.15) * 1.4 + this.wind * 0.15;
+      const sway = Math.sin(this.elapsed * 2 + x * 0.15) * 1.4 + this.wind * 0.22;
       ctx.moveTo(x, gy);
       ctx.lineTo(x - 2 + sway, gy - 5);
       ctx.moveTo(x + 2, gy);
@@ -1309,7 +1505,6 @@ export class TanksStage {
     }
     ctx.stroke();
 
-    // Charred rim highlight on craters
     ctx.strokeStyle = '#78716c';
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -1328,8 +1523,8 @@ export class TanksStage {
     }
     ctx.stroke();
 
-    // 6. Glowing aiming preview (straight beam sight for Laser, glowing dots for ballistic)
-    if (!this.isBusy() && !this.matchOver && !(this.mode === 'ai' && this.turn === 1)) {
+    // 6. Short Aim Preview (intentionally short so wind still challenges your shot!)
+    if (!this.isBusy() && !this.matchOver && this.isHumanControlledTurn()) {
       const active = this.tanks[this.turn];
       const rad = (active.angleDeg * Math.PI) / 180;
       const recoilOff = active.recoil * 5;
@@ -1348,25 +1543,17 @@ export class TanksStage {
         ctx.lineTo(hit.hx, hit.hy);
         ctx.stroke();
         ctx.setLineDash([]);
-        ctx.fillStyle = `rgba(147, 197, 253, ${(0.85 * pulse).toFixed(2)})`;
-        ctx.beginPath();
-        ctx.arc(hit.hx, hit.hy, 4.2, 0, Math.PI * 2);
-        ctx.fill();
         ctx.restore();
       } else {
-        const speedMult = this.selectedWeapon === 'firerain' ? 6.4 : 6.8;
+        const speedMult = this.selectedWeapon === 'firerain' ? 6.5 : 7.0;
         const vx = Math.cos(rad) * active.power * speedMult;
         const vy = -Math.sin(rad) * active.power * speedMult;
-        for (let step = 1; step <= 10; step++) {
-          const t = step * 0.075;
-          const px = sx + vx * t + 0.5 * this.wind * 5.2 * t * t;
+        for (let step = 1; step <= 8; step++) {
+          const t = step * 0.068;
+          const px = sx + vx * t + 0.5 * this.wind * WIND_ACCEL * t * t;
           const py = sy + vy * t + 0.5 * GRAVITY * t * t;
-          const a = Math.max(0.12, (0.92 - step * 0.08) * pulse);
-          const radDot = Math.max(1.4, 3.6 - step * 0.22);
-          ctx.fillStyle = `rgba(250, 204, 21, ${(a * 0.3).toFixed(2)})`;
-          ctx.beginPath();
-          ctx.arc(px, py, radDot * 2.1, 0, Math.PI * 2);
-          ctx.fill();
+          const a = Math.max(0.12, (0.9 - step * 0.1) * pulse);
+          const radDot = Math.max(1.4, 3.4 - step * 0.24);
           ctx.fillStyle = `rgba(254, 240, 138, ${a.toFixed(2)})`;
           ctx.beginPath();
           ctx.arc(px, py, radDot, 0, Math.PI * 2);
@@ -1375,9 +1562,12 @@ export class TanksStage {
       }
     }
 
-    // 7. Draw detailed tanks
-    this.drawTank(this.tanks[0], this.turn === 0 && !this.matchOver, 1);
-    this.drawTank(this.tanks[1], this.turn === 1 && !this.matchOver, -1);
+    // 7. Draw all 5 tanks (destroyed tanks render as darkened smoking wrecks)
+    for (let i = 0; i < this.tanks.length; i++) {
+      const tk = this.tanks[i];
+      const facing: 1 | -1 = tk.angleDeg <= 90 ? 1 : -1;
+      this.drawTank(tk, i === this.turn && !this.matchOver && tk.hp > 0, facing);
+    }
 
     // 8. Laser beams
     for (const lb of this.laserBeams) {
@@ -1400,7 +1590,7 @@ export class TanksStage {
       ctx.restore();
     }
 
-    // 9. Projectiles & glowing trails
+    // 9. Projectiles & trails
     for (const p of this.projectiles) {
       const def = WEAPONS.find((w) => w.id === p.weaponId) || WEAPONS[0];
       if (p.trail.length > 1) {
@@ -1423,7 +1613,6 @@ export class TanksStage {
         ctx.restore();
       }
 
-      // Outer glow + shell head
       ctx.save();
       ctx.translate(p.x, p.y);
       ctx.rotate(Math.atan2(p.vy, p.vx));
@@ -1458,7 +1647,7 @@ export class TanksStage {
       ctx.restore();
     }
 
-    // 11. Dynamic expanding fireballs
+    // 11. Explosions
     for (const ex of this.explosions) {
       const p = ex.life / ex.maxLife;
       const grow = 1.24 - p * 0.48;
@@ -1468,13 +1657,11 @@ export class TanksStage {
       ctx.beginPath();
       ctx.arc(ex.x, ex.y, ex.radius * grow * 1.15, 0, Math.PI * 2);
       ctx.fill();
-
       ctx.globalAlpha = Math.max(0, p * 0.85);
       ctx.fillStyle = ex.isMound ? '#fde68a' : '#f97316';
       ctx.beginPath();
       ctx.arc(ex.x, ex.y, ex.radius * grow * 0.78, 0, Math.PI * 2);
       ctx.fill();
-
       ctx.globalAlpha = Math.max(0, p);
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
@@ -1483,7 +1670,7 @@ export class TanksStage {
       ctx.restore();
     }
 
-    // 12. Particles (sparks & billowing smoke)
+    // 12. Particles
     for (const pt of this.particles) {
       ctx.globalAlpha = Math.max(0, (pt.life / pt.maxLife) * (pt.kind === 'smoke' ? 0.65 : 1));
       ctx.fillStyle = pt.color;
@@ -1493,7 +1680,7 @@ export class TanksStage {
     }
     ctx.globalAlpha = 1;
 
-    // 13. Flying tumbling debris chunks
+    // 13. Debris chunks
     for (const d of this.debris) {
       ctx.save();
       ctx.globalAlpha = Math.max(0, Math.min(1, d.life / d.maxLife));
@@ -1504,7 +1691,7 @@ export class TanksStage {
       ctx.restore();
     }
 
-    // 14. Bold outlined floating damage numbers
+    // 14. Float texts
     ctx.textAlign = 'center';
     for (const f of this.floats) {
       const a = Math.max(0, Math.min(1, f.life / (f.maxLife * 0.4)));
@@ -1548,212 +1735,135 @@ export class TanksStage {
 
   private drawTank(tank: TankEntity, activeTurn: boolean, facing: 1 | -1): void {
     const skin = TANK_SKINS[tank.skinId] || TANK_SKINS[0];
+    const dead = tank.hp <= 0;
     const ctx = this.ctx;
     ctx.save();
     ctx.translate(tank.x, tank.y);
+    if (dead) ctx.globalAlpha = 0.42;
 
-    // Subtle ground contact shadow
+    // Ground contact shadow
     ctx.fillStyle = 'rgba(2, 6, 23, 0.48)';
     ctx.beginPath();
-    ctx.ellipse(0, 1, 22, 4.2, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 1, 20, 4, 0, 0, Math.PI * 2);
     ctx.fill();
 
     // Active turn pulsing halo
-    if (activeTurn) {
+    if (activeTurn && !dead) {
       const pulse = 0.65 + 0.35 * Math.sin(this.elapsed * 5);
-      ctx.strokeStyle = `rgba(250, 204, 21, ${(0.75 * pulse).toFixed(2)})`;
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = `rgba(250, 204, 21, ${(0.8 * pulse).toFixed(2)})`;
+      ctx.lineWidth = 2.2;
       ctx.beginPath();
-      ctx.arc(0, -11, 26, 0, Math.PI * 2);
+      ctx.arc(0, -11, 25, 0, Math.PI * 2);
       ctx.stroke();
     }
 
-    // Swaying whip antenna from turret rear
+    // Swaying whip antenna blown by wind
     const antX = -facing * 7;
-    const antSway = Math.sin(this.elapsed * 4 + tank.x * 0.1) * 1.4 - this.wind * 0.25;
+    const antSway = Math.sin(this.elapsed * 4 + tank.x * 0.1) * 1.4 + this.wind * 0.32;
     ctx.strokeStyle = '#cbd5e1';
-    ctx.lineWidth = 1.4;
+    ctx.lineWidth = 1.3;
     ctx.beginPath();
     ctx.moveTo(antX, -20);
     ctx.quadraticCurveTo(antX + antSway * 0.5, -28, antX + antSway, -34);
     ctx.stroke();
-    ctx.fillStyle = skin.accent;
-    ctx.beginPath();
-    ctx.arc(antX + antSway, -34, 1.8, 0, Math.PI * 2);
-    ctx.fill();
 
-    // Cannon barrel with recoil kick, bore evacuator & slotted muzzle brake
+    // Cannon barrel
     const rad = (tank.angleDeg * Math.PI) / 180;
     const recoilOffset = tank.recoil * 5.2;
     ctx.save();
     ctx.translate(0, -14);
     ctx.rotate(-rad);
     ctx.translate(-recoilOffset, 0);
-
-    // Trunnion collar
-    ctx.fillStyle = '#334155';
-    ctx.fillRect(0, -4, 7, 8);
-    // Main barrel tube with highlight
     ctx.fillStyle = '#0f172a';
-    ctx.fillRect(5, -3.5, 19, 7);
-    ctx.fillStyle = skin.accent;
-    ctx.fillRect(5, -2.5, 19, 4.8);
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    ctx.fillRect(5, -2.2, 18, 1.5);
-    // Bore evacuator bulge
-    ctx.fillStyle = skin.turret;
-    ctx.fillRect(11, -3.4, 5, 6.8);
-    // Muzzle brake
-    ctx.fillStyle = '#1e293b';
-    ctx.fillRect(22, -3.8, 5, 7.6);
-    ctx.fillStyle = skin.accent;
-    ctx.fillRect(23, -3.2, 1.4, 6.4);
-
-    // Muzzle flash
+    ctx.fillRect(5, -3.4, 18, 6.8);
+    ctx.fillStyle = dead ? '#475569' : skin.accent;
+    ctx.fillRect(5, -2.3, 18, 4.6);
     if (tank.muzzleFlash > 0) {
       const f = tank.muzzleFlash / 0.14;
       ctx.fillStyle = `rgba(254, 240, 138, ${f.toFixed(2)})`;
       ctx.beginPath();
-      ctx.ellipse(31, 0, 9 * f + 2, 5 * f + 1, 0, 0, Math.PI * 2);
+      ctx.ellipse(30, 0, 9 * f + 2, 5 * f + 1, 0, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
 
-    // Shaded cylindrical turret dome + commander cupola hatch
-    const turretGrad = ctx.createLinearGradient(-10, -24, 10, -13);
-    turretGrad.addColorStop(0, skin.accent);
-    turretGrad.addColorStop(0.35, skin.turret);
-    turretGrad.addColorStop(1, '#0f172a');
-    ctx.fillStyle = turretGrad;
+    // Turret dome
+    ctx.fillStyle = dead ? '#334155' : skin.turret;
     ctx.beginPath();
-    ctx.arc(0, -14, 9.5, Math.PI, 0);
+    ctx.arc(0, -14, 9, Math.PI, 0);
     ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = 'rgba(15, 23, 42, 0.8)';
+    ctx.strokeStyle = '#0f172a';
     ctx.lineWidth = 1.2;
     ctx.stroke();
 
-    // Commander cupola hatch & periscope visor
-    ctx.fillStyle = skin.body;
+    // Hull
+    ctx.fillStyle = dead ? '#1e293b' : skin.body;
     ctx.beginPath();
-    ctx.roundRect(-4.5, -25.5, 9, 3.5, 1.5);
-    ctx.fill();
-    ctx.fillStyle = '#38bdf8';
-    ctx.fillRect(facing > 0 ? 1 : -3.5, -24.5, 2.5, 1.3);
-
-    // Turret rivets
-    ctx.fillStyle = 'rgba(248, 250, 252, 0.55)';
-    for (const rx of [-5.5, 0, 5.5]) {
-      ctx.beginPath();
-      ctx.arc(rx, -16.2, 0.9, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Sloped armored hull + rear exhaust + front headlight
-    const hullGrad = ctx.createLinearGradient(0, -16, 0, -5);
-    hullGrad.addColorStop(0, skin.turret);
-    hullGrad.addColorStop(0.55, skin.body);
-    hullGrad.addColorStop(1, '#1e293b');
-    ctx.fillStyle = hullGrad;
-    ctx.beginPath();
-    ctx.moveTo(-16, -7);
-    ctx.lineTo(-14, -14);
-    ctx.lineTo(14, -14);
-    ctx.lineTo(17, -7);
+    ctx.moveTo(-15, -7);
+    ctx.lineTo(-13, -14);
+    ctx.lineTo(13, -14);
+    ctx.lineTo(16, -7);
     ctx.closePath();
     ctx.fill();
-    ctx.strokeStyle = 'rgba(15,23,42,0.85)';
-    ctx.lineWidth = 1.2;
     ctx.stroke();
 
-    // Side armor skirt + hull rivets
-    ctx.fillStyle = skin.body;
-    ctx.beginPath();
-    ctx.roundRect(-16.5, -10.5, 33, 4.5, 2);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(248, 250, 252, 0.65)';
-    for (let rx = -13; rx <= 13; rx += 6.5) {
-      ctx.beginPath();
-      ctx.arc(rx, -8.3, 0.9, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Exhaust muffler & headlight
-    ctx.fillStyle = '#334155';
-    ctx.fillRect(-facing * 15 - 1.5, -16.5, 3, 4);
-    ctx.fillStyle = '#fef08a';
-    ctx.beginPath();
-    ctx.arc(facing * 15, -11.5, 1.6, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Articulated caterpillar tracks + tread teeth + 5 rotating roadwheels
+    // Tracks
     ctx.fillStyle = '#0f172a';
     ctx.beginPath();
-    ctx.roundRect(-19, -7.5, 38, 8.8, 4.4);
+    ctx.roundRect(-18, -7.2, 36, 8.2, 4);
     ctx.fill();
-    ctx.strokeStyle = '#475569';
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
 
-    // Tread blocks around belt
-    ctx.fillStyle = '#334155';
-    for (let tx = -15; tx <= 14; tx += 4.5) {
-      ctx.fillRect(tx, -8.1, 2.2, 1.2);
-      ctx.fillRect(tx, 0.4, 2.2, 1.2);
-    }
-
-    // 5 metallic roadwheels with spinning hub spokes
     for (let wi = -2; wi <= 2; wi++) {
-      const wx = wi * 7;
-      const wy = -3.1;
-      const wr = Math.abs(wi) === 2 ? 2.8 : 3.2;
       ctx.fillStyle = '#64748b';
       ctx.beginPath();
-      ctx.arc(wx, wy, wr, 0, Math.PI * 2);
+      ctx.arc(wi * 6.5, -3, 2.7, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = '#1e293b';
-      ctx.beginPath();
-      ctx.arc(wx, wy, wr * 0.52, 0, Math.PI * 2);
-      ctx.fill();
-      // Wheel spoke glint
-      ctx.strokeStyle = '#cbd5e1';
-      ctx.lineWidth = 0.9;
-      ctx.beginPath();
-      ctx.moveTo(wx, wy);
-      ctx.lineTo(wx + Math.cos(tank.wheelSpin) * wr * 0.8, wy + Math.sin(tank.wheelSpin) * wr * 0.8);
-      ctx.stroke();
     }
 
-    // Hit flash overlay
     if (tank.hitFlash > 0) {
       ctx.globalAlpha = Math.min(0.65, tank.hitFlash * 4);
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
-      ctx.roundRect(-20, -26, 40, 28, 8);
+      ctx.roundRect(-19, -25, 38, 26, 8);
       ctx.fill();
       ctx.globalAlpha = 1;
     }
 
-    // HP bar & nameplate above tank
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-    ctx.beginPath();
-    ctx.roundRect(-21, -40, 42, 7, 3);
-    ctx.fill();
-    ctx.fillStyle = tank.hp > 50 ? '#22c55e' : tank.hp > 25 ? '#f59e0b' : '#ef4444';
-    const hpW = Math.max(0, 38 * (tank.hp / tank.maxHp));
-    if (hpW > 0) {
+    if (!dead) {
+      // HP bar + Mana bar + nameplate above living tank
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
       ctx.beginPath();
-      ctx.roundRect(-19, -38.8, hpW, 4.6, 2);
+      ctx.roundRect(-20, -42, 40, 6.2, 3);
       ctx.fill();
-    }
+      ctx.fillStyle = tank.hp > 50 ? '#22c55e' : tank.hp > 25 ? '#f59e0b' : '#ef4444';
+      const hpW = Math.max(0, 36 * (tank.hp / tank.maxHp));
+      if (hpW > 0) {
+        ctx.beginPath();
+        ctx.roundRect(-18, -40.8, hpW, 3.8, 2);
+        ctx.fill();
+      }
 
-    ctx.font = 'bold 10px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = 'rgba(2, 6, 23, 0.85)';
-    ctx.strokeText(tank.label, 0, -44);
-    ctx.fillStyle = '#f8fafc';
-    ctx.fillText(tank.label, 0, -44);
+      // Slim cyan Mana bar underneath HP bar
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+      ctx.fillRect(-18, -35.2, 36, 3);
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillRect(-18, -35.2, 36 * (tank.mana / tank.maxMana), 3);
+
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(2, 6, 23, 0.9)';
+      ctx.strokeText(tank.label, 0, -46);
+      ctx.fillStyle = activeTurn ? '#fde047' : '#f8fafc';
+      ctx.fillText(tank.label, 0, -46);
+    } else {
+      ctx.globalAlpha = 0.8;
+      ctx.font = 'bold 9px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillText('💀', 0, -24);
+    }
 
     ctx.restore();
   }

@@ -4,7 +4,7 @@ import {
   GlobalPocketTanksEntry,
   submitGlobalPocketTanksScore,
 } from './api/highscores';
-import { TANK_SKINS, WEAPONS, WeaponId } from './data/tanks';
+import { MAX_MANA_PER_ROUND, TANK_SKINS, WEAPONS, WeaponId } from './data/tanks';
 import { SoundFX } from './game/SoundFX';
 import { GameMode, HudSnapshot, MatchEndInfo, TanksStage } from './game/TanksStage';
 import {
@@ -23,6 +23,7 @@ const sfx = new SoundFX();
 let stage: TanksStage | null = null;
 let hsTab: HsTab = 'global';
 let selectedMode: GameMode = 'ai';
+let currentMana = 50;
 
 const root = document.getElementById('app') as HTMLElement;
 
@@ -30,13 +31,13 @@ root.innerHTML = `
   <section id="screen-home" class="screen home-screen">
     <div class="home-hero">
       <div class="emblem">💣</div>
-      <h1 class="game-title">Pocket Tanks Duel</h1>
-      <p class="game-subtitle">10 weapons, wind &amp; craters</p>
+      <h1 class="game-title">Matey Tanks</h1>
+      <p class="game-subtitle">5-Tank Battles · Changing Wind · Weapon Mana</p>
       <div id="home-best" class="best-pill">🏆 Best Score: 0</div>
     </div>
     <div class="home-actions">
-      <button id="btn-play-ai" class="btn btn-primary">🤖 1P vs CPU</button>
-      <button id="btn-play-pvp" class="btn btn-secondary">⚔️ 2P Duel</button>
+      <button id="btn-play-ai" class="btn btn-primary">🤖 1P vs 4 CPUs (5 Tanks)</button>
+      <button id="btn-play-pvp" class="btn btn-secondary">⚔️ 5P Pass &amp; Play</button>
       <button id="btn-highscores" class="btn btn-secondary">🏆 Leaderboard</button>
       <button id="btn-options" class="btn btn-secondary">⚙️ Tank Setup</button>
     </div>
@@ -49,8 +50,9 @@ root.innerHTML = `
         <button id="btn-game-home" class="btn-small">← Menu</button>
         <div class="hud-badges">
           <span id="hud-turn" class="hud-pill">Turn: YOU</span>
-          <span id="hud-wind" class="hud-pill">🌬️ 0.0</span>
-          <span id="hud-round" class="hud-pill">Round 1 · 0 pt</span>
+          <span id="hud-mana" class="hud-pill hud-mana">💎 50/${MAX_MANA_PER_ROUND}</span>
+          <span id="hud-wind" class="hud-pill hud-wind">🌬️ → 6.5</span>
+          <span id="hud-round" class="hud-pill">5/5 Alive · R1</span>
         </div>
         <button id="btn-game-sound" class="btn-small">🔊</button>
       </div>
@@ -66,7 +68,9 @@ root.innerHTML = `
     </div>
 
     <div class="controls-dock">
-      <div id="weapon-strip" class="weapon-strip"></div>
+      <div class="weapon-row-head">
+        <div id="weapon-strip" class="weapon-strip"></div>
+      </div>
       <div id="weapon-info" class="weapon-info"></div>
       <div class="control-grid">
         <div class="ctrl-box">
@@ -99,7 +103,7 @@ root.innerHTML = `
   <section id="screen-highscores" class="screen hidden">
     <div class="top-nav">
       <button id="btn-hs-back" class="btn-small">← Back</button>
-      <h2 id="hs-heading" class="screen-heading">🏆 Leaderboard</h2>
+      <h2 id="hs-heading" class="screen-heading">🏆 Matey Tanks Leaderboard</h2>
       <button id="btn-hs-refresh" class="btn-small">↻</button>
     </div>
     <div id="hs-status-banner" class="hs-status-banner">📱 Offline Mode — Local Highscores</div>
@@ -172,29 +176,37 @@ function updateHomePill(): void {
   }
 }
 
-function renderWeaponStrip(activeId: WeaponId): void {
+function renderWeaponStrip(activeId: WeaponId, availableMana: number): void {
   const strip = document.getElementById('weapon-strip');
   const infoEl = document.getElementById('weapon-info');
   if (infoEl) {
     const active = WEAPONS.find((w) => w.id === activeId) || WEAPONS[0];
-    infoEl.textContent = `${active.icon} ${active.name} · DMG ${active.damage} — ${active.desc}`;
+    const costTxt = active.manaCost === 0 ? 'FREE (0 💎)' : `${active.manaCost} 💎`;
+    infoEl.textContent = `${active.icon} ${active.name} · ${costTxt} · DMG ${active.damage} — ${active.desc}`;
   }
   if (!strip) return;
-  strip.innerHTML = WEAPONS.map(
-    (w) =>
-      `<button class="weapon-chip ${w.id === activeId ? 'active' : ''}" data-weapon="${w.id}" title="${escapeHtml(w.desc)}">${w.icon} ${escapeHtml(w.shortName)}</button>`
-  ).join('');
+  strip.innerHTML = WEAPONS.map((w) => {
+    const affordable = w.manaCost <= availableMana;
+    const costBadge = w.manaCost === 0 ? 'FREE' : `${w.manaCost}💎`;
+    return `<button class="weapon-chip ${w.id === activeId ? 'active' : ''} ${affordable ? '' : 'locked'}" data-weapon="${w.id}" ${affordable ? '' : 'disabled'} title="${escapeHtml(w.desc)}">
+      <span>${w.icon} ${escapeHtml(w.shortName)}</span>
+      <span class="mana-cost-tag ${w.manaCost === 0 ? 'free' : ''}">${costBadge}</span>
+    </button>`;
+  }).join('');
+
   strip.querySelectorAll<HTMLButtonElement>('[data-weapon]').forEach((btn) => {
     btn.onclick = () => {
       const wid = btn.dataset.weapon as WeaponId;
       stage?.setWeapon(wid);
-      renderWeaponStrip(wid);
+      renderWeaponStrip(wid, currentMana);
     };
   });
 }
 
 function updateHud(hud: HudSnapshot): void {
+  currentMana = hud.activeMana;
   const turnEl = document.getElementById('hud-turn');
+  const manaEl = document.getElementById('hud-mana');
   const windEl = document.getElementById('hud-wind');
   const roundEl = document.getElementById('hud-round');
   const angLbl = document.getElementById('lbl-angle');
@@ -204,23 +216,25 @@ function updateHud(hud: HudSnapshot): void {
   const btnFire = document.getElementById('btn-fire') as HTMLButtonElement | null;
 
   if (turnEl) {
-    turnEl.textContent =
-      hud.turn === 0
-        ? `Turn: YOU (${hud.p1Hp}%)`
-        : `Turn: ${hud.mode === 'ai' ? 'CPU' : 'P2'} (${hud.p2Hp}%)`;
+    turnEl.textContent = `${hud.turnLabel} (${hud.activeHp}%)`;
+  }
+  if (manaEl) {
+    manaEl.textContent = `💎 ${hud.activeMana}/${hud.maxMana}`;
   }
   if (windEl) {
-    const arrow = hud.wind > 0.3 ? '→' : hud.wind < -0.3 ? '←' : '•';
+    const arrow = hud.wind >= 0 ? '→' : '←';
     windEl.textContent = `🌬️ ${arrow} ${Math.abs(hud.wind).toFixed(1)}`;
   }
   if (roundEl) {
-    roundEl.textContent = `Round ${hud.round} · ${hud.score} pt`;
+    roundEl.textContent = `${hud.aliveCount}/${hud.totalTanks} Alive · R${hud.round} · ${hud.score}pt`;
   }
   if (angLbl) angLbl.textContent = `${hud.angle}°`;
   if (pwrLbl) pwrLbl.textContent = `${hud.power}%`;
   if (rngAngle) rngAngle.value = String(hud.angle);
   if (rngPower) rngPower.value = String(hud.power);
-  if (btnFire) btnFire.disabled = hud.busy || (hud.mode === 'ai' && hud.turn === 1);
+  if (btnFire) btnFire.disabled = hud.busy || !hud.isPlayerTurn;
+
+  renderWeaponStrip(hud.weaponId, hud.activeMana);
 }
 
 function handleMatchEnd(info: MatchEndInfo): void {
@@ -243,12 +257,12 @@ function handleMatchEnd(info: MatchEndInfo): void {
         tankSkin: appState.tankSkin,
       });
     }
-    title.textContent = won ? `🎉 Round ${info.round} Won!` : '💥 Defeated!';
+    title.textContent = won ? `🎉 Round ${info.round} Victory!` : `💥 ${info.winnerLabel} Wins!`;
     sub.textContent = `Score: ${info.score} pt · Win streak: ${info.streak}`;
     nextBtn.classList.toggle('hidden', !won);
   } else {
-    title.textContent = won ? '🏆 Player 1 Wins!' : '🏆 Player 2 Wins!';
-    sub.textContent = 'Great artillery duel!';
+    title.textContent = `🏆 ${info.winnerLabel} Wins!`;
+    sub.textContent = 'Last tank standing in the 5-tank battle!';
     nextBtn.classList.remove('hidden');
   }
   card.classList.remove('hidden');
@@ -264,7 +278,6 @@ function startGame(mode: GameMode): void {
   document.getElementById('gameover-card')?.classList.add('hidden');
   showScreen('game');
   syncGameSoundBtn();
-  renderWeaponStrip('standard');
 
   const canvas = document.getElementById('tanks-canvas') as HTMLCanvasElement;
   if (!stage) {
@@ -317,7 +330,7 @@ async function renderHighscores(): Promise<void> {
   if (hsTab === 'local') {
     updateHsStatusBanner(Boolean(appState.apiBaseUrl));
     if (appState.highscores.length === 0) {
-      list.innerHTML = `<div class="hs-row"><span class="hs-meta">No scores recorded yet. Start a duel!</span></div>`;
+      list.innerHTML = `<div class="hs-row"><span class="hs-meta">No scores recorded yet. Start a 5-tank battle!</span></div>`;
       return;
     }
     list.innerHTML = appState.highscores
@@ -443,7 +456,6 @@ async function init(): Promise<void> {
     syncGameSoundBtn();
   });
 
-  // Cannon controls
   document.getElementById('btn-ang-down')?.addEventListener('click', () => stage?.adjustAngle(-2));
   document.getElementById('btn-ang-up')?.addEventListener('click', () => stage?.adjustAngle(2));
   document.getElementById('rng-angle')?.addEventListener('input', (e) => {
