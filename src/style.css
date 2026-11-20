@@ -268,18 +268,90 @@ html, body {
     height: 36px; padding: 0 18px; font-size: 0.9rem; white-space: nowrap;
   }
   .gameover-card {
-    padding: 12px 16px; gap: 6px;
+    padding: 12px 16px; gap: 8px;
+  }
+  .go-btn-grid {
+    grid-template-columns: 1fr 1fr;
   }
 }
 
-.gameover-card {
-  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-  z-index: 20; background: rgba(15, 23, 42, 0.96); border: 2px solid var(--accent);
-  border-radius: 20px; padding: 18px 22px; text-align: center;
-  display: flex; flex-direction: column; gap: 10px; min-width: 270px; max-width: calc(100vw - 32px);
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7);
+.hidden { display: none !important; }
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(2, 6, 23, 0.78);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
 }
-.gameover-card.hidden { display: none; }
+
+.gameover-card {
+  position: relative;
+  background: rgba(15, 23, 42, 0.97);
+  border: 2px solid var(--accent);
+  border-radius: 20px;
+  padding: 18px 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(380px, 100%);
+  max-height: 92dvh;
+  overflow-y: auto;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.72);
+}
+
+.go-btn-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.fuel-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 7px;
+  height: 36px;
+  border-radius: 9px;
+  background: rgba(15, 23, 42, 0.86);
+  border: 1px solid rgba(250, 204, 21, 0.45);
+  color: #fde68a;
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.fuel-pill.low {
+  border-color: rgba(239, 68, 68, 0.65);
+  color: #fca5a5;
+}
+.btn-move:disabled { opacity: 0.38; cursor: not-allowed; }
+
+.more-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 11px;
+  border-radius: 11px;
+  background: rgba(30, 41, 59, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  font-size: 0.8rem;
+}
+.more-item span { color: #cbd5e1; font-size: 0.73rem; }
+.more-item.featured {
+  border-color: #facc15;
+  background: rgba(250, 204, 21, 0.14);
+}
+.more-item.featured strong { color: #fde047; }
+
+@media (max-width: 390px) {
+  .hud-pill { padding: 3px 6px; font-size: 0.66rem; }
+  .ctrl-step { width: 26px; height: 28px; min-width: 26px; font-size: 0.85rem; }
+}
 
 .hs-tabs { display: flex; gap: 8px; padding: 0 16px 10px; }
 .hs-tab {

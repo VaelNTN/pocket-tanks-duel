@@ -38,8 +38,11 @@ root.innerHTML = `
     <div class="home-actions">
       <button id="btn-play-ai" class="btn btn-primary">🤖 1P vs 4 CPUs (5 Tanks)</button>
       <button id="btn-play-pvp" class="btn btn-secondary">⚔️ 5P Pass &amp; Play</button>
-      <button id="btn-highscores" class="btn btn-secondary">🏆 Leaderboard</button>
-      <button id="btn-options" class="btn btn-secondary">⚙️ Tank Setup</button>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <button id="btn-highscores" class="btn btn-secondary">🏆 Ranks</button>
+        <button id="btn-options" class="btn btn-secondary">⚙️ Setup</button>
+      </div>
+      <button id="btn-more-games" class="btn btn-secondary" style="font-size:0.86rem;padding:10px 14px;">🎮 More Games by VaelNTN</button>
     </div>
   </section>
 
@@ -47,23 +50,14 @@ root.innerHTML = `
     <div class="arena-wrap">
       <canvas id="tanks-canvas" class="game-canvas"></canvas>
       <div class="game-top-bar">
-        <button id="btn-game-home" class="btn-small">← Menu</button>
+        <button id="btn-game-home" class="btn-small">⏸️ Menu</button>
         <div class="hud-badges">
           <span id="hud-turn" class="hud-pill">Turn: YOU</span>
           <span id="hud-mana" class="hud-pill hud-mana">💎 50/${MAX_MANA_PER_ROUND}</span>
           <span id="hud-wind" class="hud-pill hud-wind">🌬️ → 6.5</span>
-          <span id="hud-round" class="hud-pill">5/5 Alive · R1</span>
+          <span id="hud-round" class="hud-pill">5/5 · R1</span>
         </div>
         <button id="btn-game-sound" class="btn-small">🔊</button>
-      </div>
-
-      <div id="gameover-card" class="gameover-card hidden">
-        <h2 id="go-title" style="margin:0;color:#fde047;">Victory!</h2>
-        <div id="go-sub" style="font-size:0.95rem;color:#cbd5e1;"></div>
-        <button id="btn-next-round" class="btn btn-primary">➡️ Next Round</button>
-        <button id="btn-retry-match" class="btn btn-secondary">🔄 Retry</button>
-        <button id="btn-go-hs" class="btn btn-secondary">🏆 Leaderboard</button>
-        <button id="btn-go-menu" class="btn btn-secondary">🏠 Menu</button>
       </div>
     </div>
 
@@ -92,6 +86,7 @@ root.innerHTML = `
         <div class="fire-col">
           <div class="move-row">
             <button id="btn-move-left" class="btn-move" aria-label="Move left">◀</button>
+            <span id="lbl-fuel" class="fuel-pill" title="Movement Fuel">⛽100</span>
             <button id="btn-move-right" class="btn-move" aria-label="Move right">▶</button>
           </div>
           <button id="btn-fire" class="btn-fire">🔥 Fire!</button>
@@ -99,6 +94,47 @@ root.innerHTML = `
       </div>
     </div>
   </section>
+
+  <div id="gameover-backdrop" class="modal-backdrop hidden">
+    <div id="gameover-card" class="gameover-card">
+      <h2 id="go-title" style="margin:0;color:#fde047;">Victory!</h2>
+      <div id="go-sub" style="font-size:0.95rem;color:#cbd5e1;"></div>
+      <div class="go-btn-grid">
+        <button id="btn-next-round" class="btn btn-primary">➡️ Next Round</button>
+        <button id="btn-retry-match" class="btn btn-secondary">🔄 Retry</button>
+        <button id="btn-go-hs" class="btn btn-secondary">🏆 Ranks</button>
+        <button id="btn-go-menu" class="btn btn-secondary">🏠 Menu</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="pause-backdrop" class="modal-backdrop hidden">
+    <div class="gameover-card">
+      <h2 style="margin:0;color:#fde047;">⏸️ Battle Paused</h2>
+      <div style="font-size:0.86rem;color:#cbd5e1;">Adjust settings or return to menu.</div>
+      <div class="go-btn-grid">
+        <button id="btn-pause-resume" class="btn btn-primary">▶ Resume</button>
+        <button id="btn-pause-restart" class="btn btn-secondary">🔄 Restart</button>
+        <button id="btn-pause-sound" class="btn btn-secondary">🔊 Sound</button>
+        <button id="btn-pause-exit" class="btn btn-secondary" style="border-color:rgba(239,68,68,0.5);color:#fca5a5;">🏠 Exit Match</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="more-backdrop" class="modal-backdrop hidden">
+    <div class="gameover-card" style="text-align:left;">
+      <h2 style="margin:0;color:#38bdf8;font-size:1.1rem;">🎮 VaelNTN Studios</h2>
+      <div class="more-item featured">
+        <strong>⭐ Starforge Survivors (Premium Flagship)</strong>
+        <span>Sci-fi action roguelite · 6 heroes, 6 multi-phase bosses, relics &amp; Ascension tiers · 100% Ad-Free!</span>
+      </div>
+      <div class="more-item"><strong>✈️ SkyCommand 3D</strong><span>Free 3D Flight Simulator</span></div>
+      <div class="more-item"><strong>🧬 AI VIRUSWORLD</strong><span>Free Turn-Based Global Strategy</span></div>
+      <div class="more-item"><strong>🏎️ Apex Underground</strong><span>Free Street Racing &amp; Tuning</span></div>
+      <div class="more-item"><strong>🕹️ Arcade 100+ Hub</strong><span>100 Free Mini-Games</span></div>
+      <button id="btn-more-close" class="btn btn-primary" style="padding:10px;">Close</button>
+    </div>
+  </div>
 
   <section id="screen-highscores" class="screen hidden">
     <div class="top-nav">
@@ -226,7 +262,7 @@ function updateHud(hud: HudSnapshot): void {
     windEl.textContent = `🌬️ ${arrow} ${Math.abs(hud.wind).toFixed(1)}`;
   }
   if (roundEl) {
-    roundEl.textContent = `${hud.aliveCount}/${hud.totalTanks} Alive · R${hud.round} · ${hud.score}pt`;
+    roundEl.textContent = `${hud.aliveCount}/${hud.totalTanks} · R${hud.round} · ${hud.score}pt`;
   }
   if (angLbl) angLbl.textContent = `${hud.angle}°`;
   if (pwrLbl) pwrLbl.textContent = `${hud.power}%`;
@@ -234,15 +270,26 @@ function updateHud(hud: HudSnapshot): void {
   if (rngPower) rngPower.value = String(hud.power);
   if (btnFire) btnFire.disabled = hud.busy || !hud.isPlayerTurn;
 
+  const fuelEl = document.getElementById('lbl-fuel');
+  const btnMoveL = document.getElementById('btn-move-left') as HTMLButtonElement | null;
+  const btnMoveR = document.getElementById('btn-move-right') as HTMLButtonElement | null;
+  if (fuelEl) {
+    fuelEl.textContent = `⛽${Math.round(hud.fuel)}`;
+    fuelEl.classList.toggle('low', hud.fuel < 15);
+  }
+  const cantMove = hud.busy || !hud.isPlayerTurn || hud.fuel < 15;
+  if (btnMoveL) btnMoveL.disabled = cantMove;
+  if (btnMoveR) btnMoveR.disabled = cantMove;
+
   renderWeaponStrip(hud.weaponId, hud.activeMana);
 }
 
 function handleMatchEnd(info: MatchEndInfo): void {
-  const card = document.getElementById('gameover-card');
+  const backdrop = document.getElementById('gameover-backdrop');
   const title = document.getElementById('go-title');
   const sub = document.getElementById('go-sub');
   const nextBtn = document.getElementById('btn-next-round');
-  if (!card || !title || !sub || !nextBtn) return;
+  if (!backdrop || !title || !sub || !nextBtn) return;
 
   const won = info.winner === 0;
   if (info.mode === 'ai') {
@@ -265,17 +312,20 @@ function handleMatchEnd(info: MatchEndInfo): void {
     sub.textContent = 'Last tank standing in the 5-tank battle!';
     nextBtn.classList.remove('hidden');
   }
-  card.classList.remove('hidden');
+  backdrop.classList.remove('hidden');
 }
 
 function syncGameSoundBtn(): void {
   const sndBtn = document.getElementById('btn-game-sound');
   if (sndBtn) sndBtn.textContent = appState.soundEnabled ? '🔊' : '🔇';
+  const pauseSnd = document.getElementById('btn-pause-sound');
+  if (pauseSnd) pauseSnd.textContent = appState.soundEnabled ? '🔊 Sound: ON' : '🔇 Sound: OFF';
 }
 
 function startGame(mode: GameMode): void {
   selectedMode = mode;
-  document.getElementById('gameover-card')?.classList.add('hidden');
+  document.getElementById('gameover-backdrop')?.classList.add('hidden');
+  document.getElementById('pause-backdrop')?.classList.add('hidden');
   showScreen('game');
   syncGameSoundBtn();
 
@@ -397,7 +447,44 @@ async function init(): Promise<void> {
   document.getElementById('btn-play-pvp')?.addEventListener('click', () => startGame('pvp'));
   document.getElementById('btn-highscores')?.addEventListener('click', () => showScreen('highscores'));
   document.getElementById('btn-options')?.addEventListener('click', () => showScreen('options'));
-  document.getElementById('btn-game-home')?.addEventListener('click', () => showScreen('home'));
+  document.getElementById('btn-more-games')?.addEventListener('click', () => {
+    document.getElementById('more-backdrop')?.classList.remove('hidden');
+  });
+  document.getElementById('btn-more-close')?.addEventListener('click', () => {
+    document.getElementById('more-backdrop')?.classList.add('hidden');
+  });
+
+  let confirmExit = false;
+  const pauseExitBtn = document.getElementById('btn-pause-exit');
+  document.getElementById('btn-game-home')?.addEventListener('click', () => {
+    confirmExit = false;
+    if (pauseExitBtn) pauseExitBtn.textContent = '🏠 Exit Match';
+    syncGameSoundBtn();
+    document.getElementById('pause-backdrop')?.classList.remove('hidden');
+  });
+  document.getElementById('btn-pause-resume')?.addEventListener('click', () => {
+    document.getElementById('pause-backdrop')?.classList.add('hidden');
+  });
+  document.getElementById('btn-pause-restart')?.addEventListener('click', () => {
+    document.getElementById('pause-backdrop')?.classList.add('hidden');
+    startGame(selectedMode);
+  });
+  document.getElementById('btn-pause-sound')?.addEventListener('click', () => {
+    appState.soundEnabled = !appState.soundEnabled;
+    sfx.enabled = appState.soundEnabled;
+    savePocketTanksState(appState);
+    syncGameSoundBtn();
+  });
+  pauseExitBtn?.addEventListener('click', () => {
+    if (!confirmExit) {
+      confirmExit = true;
+      pauseExitBtn.textContent = '⚠️ Tap Again to Exit';
+      return;
+    }
+    document.getElementById('pause-backdrop')?.classList.add('hidden');
+    showScreen('home');
+  });
+
   document.getElementById('btn-hs-back')?.addEventListener('click', () => showScreen('home'));
   document.getElementById('btn-opt-back')?.addEventListener('click', () => showScreen('home'));
   document.getElementById('btn-hs-refresh')?.addEventListener('click', () => renderHighscores());
@@ -456,27 +543,80 @@ async function init(): Promise<void> {
     syncGameSoundBtn();
   });
 
-  document.getElementById('btn-ang-down')?.addEventListener('click', () => stage?.adjustAngle(-2));
-  document.getElementById('btn-ang-up')?.addEventListener('click', () => stage?.adjustAngle(2));
+  // Press-and-hold auto-repeat helper for Angle, Power & Tank Movement
+  const bindHoldRepeat = (id: string, fn: () => void, intervalMs = 85): void => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    let holdTimer: number | null = null;
+    let startDelay: number | null = null;
+    const stop = () => {
+      if (startDelay !== null) {
+        window.clearTimeout(startDelay);
+        startDelay = null;
+      }
+      if (holdTimer !== null) {
+        window.clearInterval(holdTimer);
+        holdTimer = null;
+      }
+    };
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      fn();
+      stop();
+      startDelay = window.setTimeout(() => {
+        holdTimer = window.setInterval(fn, intervalMs);
+      }, 260);
+    });
+    el.addEventListener('pointerup', stop);
+    el.addEventListener('pointercancel', stop);
+    el.addEventListener('pointerleave', stop);
+  };
+
+  bindHoldRepeat('btn-ang-down', () => stage?.adjustAngle(-2), 70);
+  bindHoldRepeat('btn-ang-up', () => stage?.adjustAngle(2), 70);
   document.getElementById('rng-angle')?.addEventListener('input', (e) => {
     stage?.setAngle(Number((e.target as HTMLInputElement).value));
   });
-  document.getElementById('btn-pwr-down')?.addEventListener('click', () => stage?.adjustPower(-3));
-  document.getElementById('btn-pwr-up')?.addEventListener('click', () => stage?.adjustPower(3));
+  bindHoldRepeat('btn-pwr-down', () => stage?.adjustPower(-3), 70);
+  bindHoldRepeat('btn-pwr-up', () => stage?.adjustPower(3), 70);
   document.getElementById('rng-power')?.addEventListener('input', (e) => {
     stage?.setPower(Number((e.target as HTMLInputElement).value));
   });
-  document.getElementById('btn-move-left')?.addEventListener('click', () => stage?.moveTank(-1));
-  document.getElementById('btn-move-right')?.addEventListener('click', () => stage?.moveTank(1));
+  bindHoldRepeat('btn-move-left', () => stage?.moveTank(-1), 130);
+  bindHoldRepeat('btn-move-right', () => stage?.moveTank(1), 130);
   document.getElementById('btn-fire')?.addEventListener('click', () => stage?.fireCurrentWeapon());
 
+  // Desktop keyboard shortcuts during match
+  window.addEventListener('keydown', (e) => {
+    const gameScreen = document.getElementById('screen-game');
+    const pauseHidden = document.getElementById('pause-backdrop')?.classList.contains('hidden');
+    const goHidden = document.getElementById('gameover-backdrop')?.classList.contains('hidden');
+    if (!gameScreen || gameScreen.classList.contains('hidden') || !pauseHidden || !goHidden) return;
+    if (e.code === 'ArrowLeft') stage?.adjustAngle(2);
+    else if (e.code === 'ArrowRight') stage?.adjustAngle(-2);
+    else if (e.code === 'ArrowUp') stage?.adjustPower(3);
+    else if (e.code === 'ArrowDown') stage?.adjustPower(-3);
+    else if (e.code === 'KeyA') stage?.moveTank(-1);
+    else if (e.code === 'KeyD') stage?.moveTank(1);
+    else if (e.code === 'Space') {
+      e.preventDefault();
+      stage?.fireCurrentWeapon();
+    }
+  });
+
   document.getElementById('btn-next-round')?.addEventListener('click', () => {
-    document.getElementById('gameover-card')?.classList.add('hidden');
+    document.getElementById('gameover-backdrop')?.classList.add('hidden');
     stage?.nextRound();
   });
   document.getElementById('btn-retry-match')?.addEventListener('click', () => startGame(selectedMode));
-  document.getElementById('btn-go-hs')?.addEventListener('click', () => showScreen('highscores'));
-  document.getElementById('btn-go-menu')?.addEventListener('click', () => showScreen('home'));
+  document.getElementById('btn-go-hs')?.addEventListener('click', () => {
+    document.getElementById('gameover-backdrop')?.classList.add('hidden');
+    showScreen('highscores');
+  });
+  document.getElementById('btn-go-menu')?.addEventListener('click', () => {
+    document.getElementById('gameover-backdrop')?.classList.add('hidden');
+    showScreen('home');
+  });
 }
 
 init();

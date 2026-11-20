@@ -1151,10 +1151,37 @@ export class TanksStage {
     // AI obeys the exact same Mana cost rules!
     const affordable = WEAPONS.filter((w) => w.manaCost <= ai.mana && w.id !== 'mound');
     const special = affordable.filter((w) => w.manaCost > 0);
-    const chosen =
+    let chosen: WeaponId =
       special.length > 0 && Math.random() < 0.55
         ? special[Math.floor(Math.random() * special.length)].id
         : 'standard';
+
+    // If AI considers Sniper Laser (ignores wind/gravity), verify clear direct line-of-sight first!
+    if (chosen === 'laser') {
+      const dx = target.x - ai.x;
+      const dy = (ai.y - 13) - (target.y - 12);
+      const directDeg = Math.round((Math.atan2(dy, dx) * 180) / Math.PI);
+      let clearLos = directDeg >= 5 && directDeg <= 175;
+      if (clearLos) {
+        const steps = 28;
+        for (let s = 2; s < steps - 1; s++) {
+          const t = s / steps;
+          const sx = ai.x + dx * t;
+          const sy = (ai.y - 13) - dy * t;
+          if (sy >= this.sampleTerrain(sx) - 4) {
+            clearLos = false;
+            break;
+          }
+        }
+      }
+      if (clearLos) {
+        ai.angleDeg = Math.max(5, Math.min(175, directDeg));
+        ai.power = 100;
+      } else {
+        const alt = special.filter((w) => w.id !== 'laser');
+        chosen = alt.length > 0 ? alt[Math.floor(Math.random() * alt.length)].id : 'standard';
+      }
+    }
 
     this.launchWeapon(this.turn, chosen);
   }
@@ -1320,13 +1347,21 @@ export class TanksStage {
     const skyLeft = vt.leftWorldX - 24;
     const skyW = vt.viewWorldW + 48;
 
-    // 1. Twilight sky gradient
+    // 1. Rotating round biome sky gradient (Twilight, Golden Desert, Arctic Aurora, Volcanic Dusk)
+    const biomeIdx = (this.round - 1) % 4;
+    const skyPalettes: Array<[string, string, string, string, string]> = [
+      ['#040814', '#0c1836', '#1b2948', '#362c4a', '#553a4e'], // Twilight Valley
+      ['#1a1230', '#4a2346', '#9a3412', '#d97706', '#f59e0b'], // Golden Desert Dusk
+      ['#02101d', '#06283d', '#0f4c5c', '#14b8a6', '#67e8f9'], // Arctic Aurora
+      ['#0c060c', '#2a0a18', '#5c1420', '#9a241c', '#ea580c'], // Volcanic Ash
+    ];
+    const pal = skyPalettes[biomeIdx];
     const sky = ctx.createLinearGradient(0, skyTop, 0, WORLD_H);
-    sky.addColorStop(0, '#040814');
-    sky.addColorStop(0.32, '#0c1836');
-    sky.addColorStop(0.65, '#1b2948');
-    sky.addColorStop(0.86, '#362c4a');
-    sky.addColorStop(1, '#553a4e');
+    sky.addColorStop(0, pal[0]);
+    sky.addColorStop(0.32, pal[1]);
+    sky.addColorStop(0.65, pal[2]);
+    sky.addColorStop(0.86, pal[3]);
+    sky.addColorStop(1, pal[4]);
     ctx.fillStyle = sky;
     ctx.fillRect(skyLeft, skyTop, skyW, WORLD_H - skyTop + 40);
 
@@ -1857,7 +1892,29 @@ export class TanksStage {
       ctx.strokeText(tank.label, 0, -46);
       ctx.fillStyle = activeTurn ? '#fde047' : '#f8fafc';
       ctx.fillText(tank.label, 0, -46);
+
+      // Clear bobbing turn indicator arrow above active tank
+      if (activeTurn) {
+        const bob = Math.sin(this.elapsed * 6.5) * 3.5;
+        ctx.fillStyle = '#fde047';
+        ctx.beginPath();
+        ctx.moveTo(0, -56 + bob);
+        ctx.lineTo(-6, -65 + bob);
+        ctx.lineTo(6, -65 + bob);
+        ctx.closePath();
+        ctx.fill();
+      }
     } else {
+      // Rising smoke wisps from destroyed tank wreck
+      for (let sm = 0; sm < 3; sm++) {
+        const phase = (this.elapsed * 0.7 + sm * 0.33 + tank.x * 0.01) % 1;
+        const sx = Math.sin(this.elapsed * 2 + sm * 2) * 4 + this.wind * phase * 1.4;
+        const sy = -14 - phase * 26;
+        ctx.fillStyle = `rgba(148, 163, 184, ${(0.34 * (1 - phase)).toFixed(2)})`;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 3.2 + phase * 4.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.globalAlpha = 0.8;
       ctx.font = 'bold 9px sans-serif';
       ctx.textAlign = 'center';
